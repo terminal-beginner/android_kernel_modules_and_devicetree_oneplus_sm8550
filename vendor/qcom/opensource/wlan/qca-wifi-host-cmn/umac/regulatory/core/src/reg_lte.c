@@ -180,6 +180,10 @@ QDF_STATUS reg_process_ch_avoid_event(struct wlan_objmgr_psoc *psoc,
 	struct wlan_regulatory_psoc_priv_obj *psoc_priv_obj;
 	QDF_STATUS status;
 
+	#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+		return QDF_STATUS_SUCCESS;
+	#endif /* FEATURE_FRAME_INJECTION_SUPPORT */
+
 	psoc_priv_obj = reg_get_psoc_obj(psoc);
 	if (!psoc_priv_obj) {
 		reg_err("reg psoc private obj is NULL");
