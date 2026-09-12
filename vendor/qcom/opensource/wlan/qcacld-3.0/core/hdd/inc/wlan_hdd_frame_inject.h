@@ -60,6 +60,15 @@ struct wireless_dev;
 /* Rate limiting window in milliseconds */
 #define HDD_FRAME_INJECT_RATE_WINDOW_MS  1000
 
+/*
+ * Back off briefly when the WMA queue or channel transition is busy.
+ * 50 ms bounded retry delay is used when WMA returns QDF_STATUS_E_BUSY
+ * for a queued frame (e.g. during monitor channel settling or when a
+ * transient destination peer is still being set up).
+ * (Ported from PoXiao777 commit 2dc7a442)
+ */
+#define HDD_FRAME_INJECT_RETRY_DELAY_MS  50
+
 /* Statistics type constants for hdd_update_injection_stats() */
 #define HDD_INJECTION_STAT_FRAMES_SUBMITTED     0
 #define HDD_INJECTION_STAT_FRAMES_TRANSMITTED   1
@@ -215,6 +224,16 @@ struct inject_frame_req {
  * @firmware_errors: Firmware rejection count
  * @last_inject_time: Timestamp of last injection
  * @total_inject_time: Total time spent in injection (microseconds)
+ * @command_submitted: WMI management commands accepted by host WMI layer
+ * @tx_complete_ok: Firmware completions reporting COMPLETE_OK
+ * @tx_complete_no_ack: Firmware completions reporting COMPLETE_NO_ACK
+ * @tx_complete_discard: Firmware completions reporting DISCARD
+ * @tx_timeout: Submitted commands with no completion before timeout
+ * @peer_not_found: Unicast frames rejected because no associated peer exists
+ *
+ * The tx_complete_* / command_submitted / peer_not_found counters are
+ * driven by real firmware completions rather than the optimistic
+ * "frame handed to WMA" path. Ported from PoXiao777 commit c74906f09.
  */
 struct injection_stats {
 	uint64_t frames_submitted;
@@ -241,6 +260,13 @@ struct injection_stats {
 	/* Per-adapter throughput tracking (not file-static) */
 	uint64_t throughput_window_start;
 	uint64_t throughput_frames_in_window;
+	/* Completion-driven counters (ported from PoXiao777 c74906f09) */
+	uint64_t command_submitted;
+	uint64_t tx_complete_ok;
+	uint64_t tx_complete_no_ack;
+	uint64_t tx_complete_discard;
+	uint64_t tx_timeout;
+	uint64_t peer_not_found;
 };
 
 /**

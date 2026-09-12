@@ -99,6 +99,16 @@ static inline void wma_injection_unmap_tx_buf(qdf_nbuf_t buf)
  */
 #define WMA_INJECTION_INFLIGHT_HIGH        200
 
+/*
+ * Idle reclaim: destroy the injection helper when no frames have been
+ * submitted for this long, so monitor RX is not affected by a stale
+ * helper after injection stops.
+ */
+#define WMA_INJECTION_IDLE_RECLAIM_DELAY_MS 5000
+
+/* Defer helper creation until monitor channel hopping has stopped. */
+#define WMA_INJECTION_CHANNEL_SETTLE_MS     750
+
 /**
  * struct wma_injection_queue_node - Node for injection queue
  * @node: List node
@@ -121,6 +131,14 @@ struct wma_injection_queue_node {
  * @max_queue_size: Maximum allowed queue size
  * @queue_work: Work item for processing queue
  * @delayed_work: Delayed work item for backpressure handling
+ * @reaper_work: Periodic stale-nbuf reaper
+ * @idle_work: Delayed work item for idle helper reclaim
+ * @settle_work: Delayed work item for channel-stability gating
+ * @channel_settling: Monitor channel hop in progress
+ * @helper_lock: Serializes helper creation/teardown vs submissions
+ * @helper_stopping: Helper is being torn down
+ * @helper_transitioning: Helper is mid-transition
+ * @inflight_count: nbufs submitted to FW, not yet completed
  * @stats: Queue statistics
  * @is_initialized: Initialization flag
  */
@@ -131,8 +149,14 @@ struct wma_injection_queue_ctx {
 	uint32_t max_queue_size;
 	qdf_work_t queue_work;
 	struct qdf_delayed_work delayed_work;
-	struct qdf_delayed_work reaper_work; /* periodic stale-nbuf reaper */
-	qdf_atomic_t inflight_count; /* nbufs submitted to FW, not yet completed */
+	struct qdf_delayed_work reaper_work;
+	struct qdf_delayed_work idle_work;
+	struct qdf_delayed_work settle_work;
+	bool channel_settling;
+	qdf_mutex_t helper_lock;
+	bool helper_stopping;
+	bool helper_transitioning;
+	qdf_atomic_t inflight_count;
 	struct wma_injection_queue_stats stats;
 	bool is_initialized;
 };
@@ -189,8 +213,10 @@ static struct wma_injection_debug_info
  *
  * Work around this by creating a lightweight AP vdev on the same channel
  * as the monitor interface and routing injected frames through it.  The AP
- * vdev has a self-peer (stored at firmware vdev+0xc) so the firmware can
- * schedule and transmit the management frame normally.
+ * vdev has a self-peer (stored at firmware vdev+0xc) for group traffic and
+ * one transient destination peer for directed traffic.  The latter lets
+ * firmware resolve Addr1 without changing any address carried in the
+ * injected frame.
  *
  * Lifecycle:
  *   Created lazily on the first injection attempt on a monitor vdev.
@@ -201,10 +227,12 @@ static struct wma_injection_debug_info
  */
 struct wma_injection_tx_vdev {
 	bool created;
+	bool unicast_peer_created;
 	uint8_t vdev_id;
 	uint8_t monitor_vdev_id;
 	uint32_t chanfreq;
 	uint8_t mac_addr[QDF_MAC_ADDR_SIZE];
+	uint8_t unicast_peer_addr[QDF_MAC_ADDR_SIZE];
 };
 
 static struct wma_injection_tx_vdev g_inj_tx_vdev;
@@ -442,6 +470,8 @@ wma_injection_ensure_tx_vdev(tp_wma_handle wma,
 	g_inj_tx_vdev.vdev_id          = vid;
 	g_inj_tx_vdev.monitor_vdev_id  = mon_vdev_id;
 	g_inj_tx_vdev.chanfreq         = chanfreq;
+	g_inj_tx_vdev.unicast_peer_created = false;
+	qdf_mem_zero(g_inj_tx_vdev.unicast_peer_addr, QDF_MAC_ADDR_SIZE);
 	qdf_mem_copy(g_inj_tx_vdev.mac_addr, inj_mac, QDF_MAC_ADDR_SIZE);
 	wma->interfaces[vid].vdev_active = true;
 
@@ -452,6 +482,87 @@ wma_injection_ensure_tx_vdev(tp_wma_handle wma,
 err_stop:
 	wmi_unified_vdev_delete_send(wma->wmi_handle, vid);
 	return status;
+}
+
+/**
+ * wma_injection_ensure_unicast_peer() - Create transient destination peer
+ * @wma: WMA handle
+ * @peer_addr: Destination MAC address (Addr1)
+ *
+ * Creates a transient peer on the helper vdev for directed injection.
+ * Firmware resolves Addr1 through this peer without changing the
+ * injected frame's address fields.
+ *
+ * Return: QDF_STATUS_SUCCESS when peer is ready.
+ */
+static QDF_STATUS
+wma_injection_ensure_unicast_peer(tp_wma_handle wma,
+				   const uint8_t *peer_addr)
+{
+	struct peer_create_params pcreate;
+	struct peer_delete_cmd_params del_param = {0};
+	QDF_STATUS status;
+	bool is_group = false;
+
+	if (!wma || !wma->wmi_handle || !g_inj_tx_vdev.created ||
+	    !peer_addr)
+		return QDF_STATUS_E_INVAL;
+
+	/* Reject group addresses and zero MAC */
+	if (peer_addr[0] & 0x01)
+		is_group = true;
+	if (is_group || qdf_is_macaddr_zero((struct qdf_mac_addr *)peer_addr)) {
+		wma_debug("Injection unicast peer: skipping group/zero addr %pM",
+			  peer_addr);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	/* Same peer already present — nothing to do */
+	if (g_inj_tx_vdev.unicast_peer_created &&
+	    qdf_mem_cmp(g_inj_tx_vdev.unicast_peer_addr, peer_addr,
+			QDF_MAC_ADDR_SIZE) == 0)
+		return QDF_STATUS_SUCCESS;
+
+	/* Reject if in-flight frames still reference the old peer */
+	if (qdf_atomic_read(&g_wma_injection_ctx.inflight_count) > 0) {
+		wma_debug("Injection unicast peer change deferred: %d in-flight",
+			  qdf_atomic_read(&g_wma_injection_ctx.inflight_count));
+		return QDF_STATUS_E_BUSY;
+	}
+
+	/* Delete old peer if present */
+	if (g_inj_tx_vdev.unicast_peer_created) {
+		del_param.vdev_id = g_inj_tx_vdev.vdev_id;
+		wmi_unified_peer_delete_send(wma->wmi_handle,
+					     g_inj_tx_vdev.unicast_peer_addr,
+					     &del_param);
+		qdf_sleep(10);
+		g_inj_tx_vdev.unicast_peer_created = false;
+		qdf_mem_zero(g_inj_tx_vdev.unicast_peer_addr,
+			     QDF_MAC_ADDR_SIZE);
+	}
+
+	/* Create new destination peer */
+	qdf_mem_zero(&pcreate, sizeof(pcreate));
+	pcreate.peer_addr = (uint8_t *)peer_addr;
+	pcreate.peer_type = WMI_PEER_TYPE_DEFAULT;
+	pcreate.vdev_id   = g_inj_tx_vdev.vdev_id;
+
+	status = wmi_unified_peer_create_send(wma->wmi_handle, &pcreate);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		wma_warn("Injection unicast peer create failed: %d", status);
+		return status;
+	}
+	qdf_sleep(10);
+
+	qdf_mem_copy(g_inj_tx_vdev.unicast_peer_addr, peer_addr,
+		     QDF_MAC_ADDR_SIZE);
+	g_inj_tx_vdev.unicast_peer_created = true;
+
+	wma_info("Injection unicast peer ready: vdev=%u peer=%pM",
+		 g_inj_tx_vdev.vdev_id, peer_addr);
+
+	return QDF_STATUS_SUCCESS;
 }
 
 /**
@@ -475,7 +586,19 @@ static void wma_injection_destroy_tx_vdev(tp_wma_handle wma)
 	 * pending DELETE and firmware asserts.
 	 */
 
-	/* 1. PEER_DELETE */
+	/* 1. Delete transient destination peer (if any), then self-peer */
+	if (g_inj_tx_vdev.unicast_peer_created) {
+		struct peer_delete_cmd_params del_u = {0};
+
+		del_u.vdev_id = g_inj_tx_vdev.vdev_id;
+		wmi_unified_peer_delete_send(wma->wmi_handle,
+					     g_inj_tx_vdev.unicast_peer_addr,
+					     &del_u);
+		qdf_sleep(10);
+		g_inj_tx_vdev.unicast_peer_created = false;
+		qdf_mem_zero(g_inj_tx_vdev.unicast_peer_addr,
+			     QDF_MAC_ADDR_SIZE);
+	}
 	{
 		struct peer_delete_cmd_params del_param = {0};
 
@@ -536,7 +659,19 @@ void wma_injection_pre_stop_cleanup(tp_wma_handle wma_handle)
 	wma_info("Pre-stop cleanup: destroying injection helper vdev_id=%u",
 		 g_inj_tx_vdev.vdev_id);
 
-	/* 1. PEER_DELETE */
+	/* 1. Delete transient destination peer (if any), then self-peer */
+	if (g_inj_tx_vdev.unicast_peer_created) {
+		struct peer_delete_cmd_params del_u = {0};
+
+		del_u.vdev_id = g_inj_tx_vdev.vdev_id;
+		wmi_unified_peer_delete_send(wma_handle->wmi_handle,
+					     g_inj_tx_vdev.unicast_peer_addr,
+					     &del_u);
+		qdf_sleep(10);
+		g_inj_tx_vdev.unicast_peer_created = false;
+		qdf_mem_zero(g_inj_tx_vdev.unicast_peer_addr,
+			     QDF_MAC_ADDR_SIZE);
+	}
 	{
 		struct peer_delete_cmd_params del_param = {0};
 
@@ -572,6 +707,9 @@ void wma_injection_pre_stop_cleanup(tp_wma_handle wma_handle)
  * Proactively re-tunes the hidden injection TX helper vdev to @new_freq.
  * If no helper vdev exists yet this is a no-op (it will be created lazily
  * on the first injection attempt at the new frequency).
+ *
+ * Rapid monitor channel hopping is debounced: helper creation is deferred
+ * until the channel has been stable for WMA_INJECTION_CHANNEL_SETTLE_MS.
  */
 void wma_injection_notify_channel_change(tp_wma_handle wma_handle,
 					 uint8_t mon_vdev_id,
@@ -580,53 +718,80 @@ void wma_injection_notify_channel_change(tp_wma_handle wma_handle,
 	struct wma_injection_queue_ctx *ctx = &g_wma_injection_ctx;
 	QDF_STATUS status;
 	int drain_wait_ms = 0;
+	bool defer_helper_until_stable = false;
 
 	if (!wma_handle || !new_freq)
 		return;
 
-	/*
-	 * If no helper vdev exists, nothing to re-tune.  It will be
-	 * created at the correct frequency on the next injection attempt.
-	 */
-	if (!g_inj_tx_vdev.created)
+	if (!ctx->is_initialized)
 		return;
 
-	/* Already on the right channel — nothing to do */
-	if (g_inj_tx_vdev.chanfreq == new_freq)
+	/* Pehle settle deadline supersede karo */
+	qdf_delayed_work_stop_sync(&ctx->settle_work);
+
+	/* Lock acquire fail pe settle_work phir se start karo */
+	if (QDF_IS_STATUS_ERROR(qdf_mutex_acquire(&ctx->helper_lock))) {
+		if (ctx->channel_settling)
+			qdf_delayed_work_start(&ctx->settle_work,
+					       WMA_INJECTION_CHANNEL_SETTLE_MS);
 		return;
-
-	wma_info("Injection channel change: re-tuning helper vdev %u from %u to %u MHz (monitor vdev %u)",
-		 g_inj_tx_vdev.vdev_id, g_inj_tx_vdev.chanfreq,
-		 new_freq, mon_vdev_id);
-
-	/*
-	 * Drain in-flight frames before switching channel.
-	 * Frames submitted to FW are DMA-mapped on the old channel;
-	 * wait for completions to arrive before retuning to avoid
-	 * transmitting on the wrong frequency.
-	 */
-	if (ctx->is_initialized) {
-		while (qdf_atomic_read(&ctx->inflight_count) > 0 &&
-		       drain_wait_ms < 100) {
-			qdf_mdelay(5);
-			drain_wait_ms += 5;
-		}
-		if (qdf_atomic_read(&ctx->inflight_count) > 0)
-			wma_warn("Channel change with %d in-flight injection frames",
-				 qdf_atomic_read(&ctx->inflight_count));
 	}
 
+	defer_helper_until_stable = ctx->channel_settling;
+	ctx->channel_settling = true;
+
+	/* Idle reclaim timer cancel — channel transition chal raha hai */
+	qdf_delayed_work_stop_sync(&ctx->idle_work);
+
+	/* Frames drain karo — purane channel pe DMA-mapped nbufs */
+	while (qdf_atomic_read(&ctx->inflight_count) > 0 &&
+	       drain_wait_ms < 100) {
+		qdf_mdelay(5);
+		drain_wait_ms += 5;
+	}
+	if (qdf_atomic_read(&ctx->inflight_count) > 0)
+		wma_warn("Channel change with %d in-flight injection frames",
+			 qdf_atomic_read(&ctx->inflight_count));
+
 	/*
-	 * wma_injection_ensure_tx_vdev handles the channel change:
-	 * if the helper vdev exists but is on a different frequency,
-	 * it issues a VDEV_START restart to re-tune the synthesizer.
-	 * If that fails it tears down and recreates the vdev.
+	 * Agar pehle se helper ready tha, usko destroy karo jab tak
+	 * channel stable na ho. Rapid retunes pe repeated helper
+	 * creation se bachne ke liye.
 	 */
-	status = wma_injection_ensure_tx_vdev(wma_handle, mon_vdev_id,
-					      new_freq);
-	if (QDF_IS_STATUS_ERROR(status))
-		wma_err("Failed to re-tune injection helper vdev to %u MHz: %d",
-			new_freq, status);
+	if (defer_helper_until_stable) {
+		if (g_inj_tx_vdev.created) {
+			wma_info("Monitor hopping to %u MHz: defer TX helper vdev %u until channel settles",
+				 new_freq, g_inj_tx_vdev.vdev_id);
+			wma_injection_destroy_tx_vdev(wma_handle);
+		}
+		qdf_mutex_release(&ctx->helper_lock);
+		/* Settle timer arm — 750ms baad resume hoga */
+		qdf_delayed_work_start(&ctx->settle_work,
+				       WMA_INJECTION_CHANNEL_SETTLE_MS);
+		return;
+	}
+
+	/* Normal path: helper ko naye channel pe retarget karo */
+	if (g_inj_tx_vdev.created) {
+		wma_info("Injection channel change: re-tuning helper vdev %u from %u to %u MHz (monitor vdev %u)",
+			 g_inj_tx_vdev.vdev_id, g_inj_tx_vdev.chanfreq,
+			 new_freq, mon_vdev_id);
+
+		status = wma_injection_ensure_tx_vdev(wma_handle, mon_vdev_id,
+						      new_freq);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			wma_warn("Failed to re-tune injection helper vdev to %u MHz: %d",
+				 new_freq, status);
+			ctx->channel_settling = false;
+			qdf_mutex_release(&ctx->helper_lock);
+			return;
+		}
+		wma_info("Monitor retune to %u MHz: keep retargeted TX helper vdev %u",
+			 new_freq, g_inj_tx_vdev.vdev_id);
+	}
+
+	ctx->channel_settling = false;
+	qdf_mutex_release(&ctx->helper_lock);
 }
 
 static void
@@ -898,6 +1063,11 @@ QDF_STATUS wma_process_injection_queue(tp_wma_handle wma_handle)
 		return QDF_STATUS_E_AGAIN;
 	}
 
+	if (ctx->channel_settling) {
+		wma_debug("Injection queue paused: channel settling");
+		return QDF_STATUS_E_AGAIN;
+	}
+
 	current_time = qdf_get_log_timestamp();
 
 	qdf_spin_lock_bh(&ctx->queue_lock);
@@ -950,12 +1120,26 @@ QDF_STATUS wma_process_injection_queue(tp_wma_handle wma_handle)
 		ctx->stats.total_queue_time += (current_time - node->timestamp);
 
 		/* Send frame to firmware */
-		status = wma_send_injection_frame_to_fw(wma_handle, &node->req, node->vdev_id);
+		status = wma_send_injection_frame_to_fw(wma_handle, &node->req,
+							 node->vdev_id);
 		if (QDF_IS_STATUS_SUCCESS(status)) {
 			ctx->stats.frames_processed++;
+		} else if (status == QDF_STATUS_E_BUSY) {
+			/*
+			 * Destination peer abhi idle nahi — node ko queue ke
+			 * front mein wapas daalo FIFO order preserve karne ke liye.
+			 */
+			qdf_spin_lock_bh(&ctx->queue_lock);
+			qdf_list_insert_front(&ctx->queue, &node->node);
+			ctx->queue_size++;
+			qdf_spin_unlock_bh(&ctx->queue_lock);
+			deferred_count++;
+			wma_debug("Injection frame deferred (E_BUSY), retry later");
+			break;
 		} else {
 			ctx->stats.frames_dropped++;
-			wma_err("Failed to send injection frame to firmware: %d", status);
+			wma_err("Failed to send injection frame to firmware: %d",
+				status);
 		}
 
 		processed_count++;
@@ -967,7 +1151,7 @@ QDF_STATUS wma_process_injection_queue(tp_wma_handle wma_handle)
 	wma_debug("Injection queue processing cycle complete: processed=%u, deferred=%u",
 		  processed_count, deferred_count);
 
-	return QDF_STATUS_SUCCESS;
+	return (deferred_count > 0) ? QDF_STATUS_E_BUSY : QDF_STATUS_SUCCESS;
 }
 
 /**
@@ -999,7 +1183,7 @@ static void wma_process_injection_queue_work(void *arg)
 
 	/* Process the queue */
 	status = wma_process_injection_queue(wma_handle);
-	if (QDF_IS_STATUS_ERROR(status)) {
+	if (QDF_IS_STATUS_ERROR(status) && status != QDF_STATUS_E_BUSY) {
 		wma_err("Failed to process injection queue: %d", status);
 	}
 
@@ -1018,6 +1202,15 @@ static void wma_process_injection_queue_work(void *arg)
 			/* Schedule immediate work for next processing cycle */
 			qdf_sched_work(0, &ctx->queue_work);
 		}
+	} else if (g_inj_tx_vdev.created && !ctx->helper_stopping &&
+		   !ctx->helper_transitioning && !ctx->channel_settling &&
+		   !cds_is_driver_recovering()) {
+		/*
+		 * Queue drained: idle reclaim timer arm karo taaki stale
+		 * helper monitor RX affect na kare.
+		 */
+		qdf_delayed_work_start(&ctx->idle_work,
+				       WMA_INJECTION_IDLE_RECLAIM_DELAY_MS);
 	}
 }
 
@@ -1036,6 +1229,97 @@ static void wma_process_injection_queue_delayed_work(void *context)
 		return;
 
 	qdf_sched_work(0, &ctx->queue_work);
+}
+
+/**
+ * wma_injection_channel_settle_work_cb() - Channel settle timer callback
+ * @context: Unused
+ *
+ * 750ms ka settle time poora hone pe channel_settling false karta hai
+ * aur queue resume karta hai agar frames pending hain.
+ */
+static void wma_injection_channel_settle_work_cb(void *context)
+{
+	struct wma_injection_queue_ctx *ctx = &g_wma_injection_ctx;
+	bool queue_has_frames;
+
+	if (!ctx->is_initialized || ctx->helper_stopping ||
+	    cds_is_driver_recovering())
+		return;
+
+	if (QDF_IS_STATUS_ERROR(qdf_mutex_acquire(&ctx->helper_lock)))
+		return;
+
+	if (!ctx->is_initialized || ctx->helper_stopping ||
+	    ctx->helper_transitioning || !ctx->channel_settling ||
+	    cds_is_driver_recovering()) {
+		qdf_mutex_release(&ctx->helper_lock);
+		return;
+	}
+
+	ctx->channel_settling = false;
+
+	qdf_spin_lock_bh(&ctx->queue_lock);
+	queue_has_frames = !qdf_list_empty(&ctx->queue);
+	qdf_spin_unlock_bh(&ctx->queue_lock);
+
+	qdf_mutex_release(&ctx->helper_lock);
+
+	wma_info("Monitor channel stable: resume injection queue queued=%u",
+		 queue_has_frames);
+	if (queue_has_frames)
+		qdf_sched_work(0, &ctx->queue_work);
+}
+
+/**
+ * wma_injection_idle_reclaim_work_cb() - Idle helper reclaim
+ * @arg: Unused
+ *
+ * 5 second tak queue empty rahe toh helper destroy karo taaki
+ * stale helper monitor RX ko affect na kare.
+ */
+static void wma_injection_idle_reclaim_work_cb(void *arg)
+{
+	struct wma_injection_queue_ctx *ctx = &g_wma_injection_ctx;
+	tp_wma_handle wma_handle;
+	QDF_STATUS status;
+
+	if (!ctx->is_initialized || ctx->helper_stopping ||
+	    ctx->helper_transitioning || ctx->channel_settling ||
+	    cds_is_driver_recovering())
+		return;
+
+	wma_handle = cds_get_context(QDF_MODULE_ID_WMA);
+	if (!wma_handle || !wma_handle->wmi_handle ||
+	    wmi_is_blocked(wma_handle->wmi_handle))
+		return;
+
+	if (QDF_IS_STATUS_ERROR(qdf_mutex_acquire(&ctx->helper_lock)))
+		return;
+
+	/* Submission aur teardown ke against serialize karke activity recheck */
+	qdf_spin_lock_bh(&ctx->queue_lock);
+	if (!qdf_list_empty(&ctx->queue) ||
+	    qdf_atomic_read(&ctx->inflight_count) ||
+	    !g_inj_tx_vdev.created || !ctx->is_initialized ||
+	    ctx->helper_stopping || ctx->helper_transitioning ||
+	    ctx->channel_settling ||
+	    cds_is_driver_recovering()) {
+		qdf_spin_unlock_bh(&ctx->queue_lock);
+		qdf_mutex_release(&ctx->helper_lock);
+		return;
+	}
+	qdf_spin_unlock_bh(&ctx->queue_lock);
+
+	if (g_inj_tx_vdev.created) {
+		wma_info("Injection idle: reclaiming TX helper vdev %u",
+			 g_inj_tx_vdev.vdev_id);
+		status = wma_injection_destroy_tx_vdev(wma_handle);
+		if (QDF_IS_STATUS_ERROR(status))
+			wma_warn("Injection idle: helper reclaim failed: %d", status);
+	}
+
+	qdf_mutex_release(&ctx->helper_lock);
 }
 
 /**
@@ -1124,6 +1408,9 @@ QDF_STATUS wma_init_injection_queue(tp_wma_handle wma_handle)
 	/* Initialize queue lock */
 	qdf_spinlock_create(&ctx->queue_lock);
 
+	/* Initialize helper lock */
+	qdf_mutex_create(&ctx->helper_lock);
+
 	/* Initialize work item */
 	qdf_create_work(0, &ctx->queue_work, wma_process_injection_queue_work, NULL);
 
@@ -1132,6 +1419,7 @@ QDF_STATUS wma_init_injection_queue(tp_wma_handle wma_handle)
 					 wma_process_injection_queue_delayed_work, NULL);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		wma_err("Failed to create delayed work: %d", status);
+		qdf_mutex_destroy(&ctx->helper_lock);
 		qdf_spinlock_destroy(&ctx->queue_lock);
 		qdf_list_destroy(&ctx->queue);
 		return status;
@@ -1143,6 +1431,34 @@ QDF_STATUS wma_init_injection_queue(tp_wma_handle wma_handle)
 	if (QDF_IS_STATUS_ERROR(status)) {
 		wma_err("Failed to create reaper work: %d", status);
 		qdf_delayed_work_destroy(&ctx->delayed_work);
+		qdf_mutex_destroy(&ctx->helper_lock);
+		qdf_spinlock_destroy(&ctx->queue_lock);
+		qdf_list_destroy(&ctx->queue);
+		return status;
+	}
+
+	/* Initialize idle-reclaim timer */
+	status = qdf_delayed_work_create(&ctx->idle_work,
+					 wma_injection_idle_reclaim_work_cb, NULL);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		wma_err("Failed to create idle reclaim work: %d", status);
+		qdf_delayed_work_destroy(&ctx->reaper_work);
+		qdf_delayed_work_destroy(&ctx->delayed_work);
+		qdf_mutex_destroy(&ctx->helper_lock);
+		qdf_spinlock_destroy(&ctx->queue_lock);
+		qdf_list_destroy(&ctx->queue);
+		return status;
+	}
+
+	/* Initialize monitor channel-stability timer */
+	status = qdf_delayed_work_create(&ctx->settle_work,
+					 wma_injection_channel_settle_work_cb, NULL);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		wma_err("Failed to create channel settle work: %d", status);
+		qdf_delayed_work_destroy(&ctx->idle_work);
+		qdf_delayed_work_destroy(&ctx->reaper_work);
+		qdf_delayed_work_destroy(&ctx->delayed_work);
+		qdf_mutex_destroy(&ctx->helper_lock);
 		qdf_spinlock_destroy(&ctx->queue_lock);
 		qdf_list_destroy(&ctx->queue);
 		return status;
@@ -1151,6 +1467,9 @@ QDF_STATUS wma_init_injection_queue(tp_wma_handle wma_handle)
 	/* Initialize context */
 	ctx->queue_size = 0;
 	ctx->max_queue_size = WMA_FRAME_INJECT_MAX_QUEUE_SIZE;
+	ctx->channel_settling = false;
+	ctx->helper_stopping = false;
+	ctx->helper_transitioning = false;
 	qdf_mem_zero(&ctx->stats, sizeof(ctx->stats));
 	qdf_atomic_init(&ctx->inflight_count);
 	ctx->is_initialized = true;
@@ -1185,6 +1504,9 @@ QDF_STATUS wma_deinit_injection_queue(tp_wma_handle wma_handle)
 
 	wma_debug("Deinitializing WMA injection queue");
 
+	/* Mark helper stopping so work items bail out early */
+	ctx->helper_stopping = true;
+
 	/* Destroy hidden injection TX vdev if present */
 	wma_injection_destroy_tx_vdev(wma_handle);
 
@@ -1199,6 +1521,14 @@ QDF_STATUS wma_deinit_injection_queue(tp_wma_handle wma_handle)
 	/* Stop and destroy reaper timer */
 	qdf_delayed_work_stop_sync(&ctx->reaper_work);
 	qdf_delayed_work_destroy(&ctx->reaper_work);
+
+	/* Stop and destroy idle-reclaim timer */
+	qdf_delayed_work_stop_sync(&ctx->idle_work);
+	qdf_delayed_work_destroy(&ctx->idle_work);
+
+	/* Stop and destroy channel-stability timer */
+	qdf_delayed_work_stop_sync(&ctx->settle_work);
+	qdf_delayed_work_destroy(&ctx->settle_work);
 
 	/* Clear the queue and free all nodes */
 	qdf_spin_lock_bh(&ctx->queue_lock);
@@ -1227,6 +1557,11 @@ QDF_STATUS wma_deinit_injection_queue(tp_wma_handle wma_handle)
 
 	/* Mark as uninitialized */
 	ctx->is_initialized = false;
+	ctx->channel_settling = false;
+	ctx->helper_transitioning = false;
+
+	/* Destroy helper lock */
+	qdf_mutex_destroy(&ctx->helper_lock);
 
 	wma_info("WMA injection queue deinitialized (dropped %u pending frames)",
 		 dropped_count);
@@ -1255,6 +1590,8 @@ QDF_STATUS wma_deinit_injection_queue(tp_wma_handle wma_handle)
 			wma_warn("Freed %u leaked injection nbufs during deinit",
 				 nbuf_leaked);
 	}
+
+	ctx->helper_stopping = false;
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1512,8 +1849,13 @@ QDF_STATUS wma_send_injection_frame_to_fw(tp_wma_handle wma_handle,
 		return QDF_STATUS_E_INVAL;
 	}
 
+	if (g_wma_injection_ctx.channel_settling) {
+		wma_debug("Injection blocked: channel settling in progress");
+		return QDF_STATUS_E_AGAIN;
+	}
+
 	if (!inject_patch_banner_logged) {
-		wma_info("Injection patch tag: monitor_sta_vdev_tx_v7");
+		wma_info("Injection patch tag: monitor_sta_vdev_tx_v8_directed_settle");
 		inject_patch_banner_logged = true;
 	}
 
@@ -1697,6 +2039,35 @@ QDF_STATUS wma_send_injection_frame_to_fw(tp_wma_handle wma_handle,
 			return status;
 		}
 		mgmt_params.vdev_id = g_inj_tx_vdev.vdev_id;
+
+		/*
+		 * Directed (unicast) frame ke liye transient destination
+		 * peer create karo. Firmware Addr1 isi peer se resolve karega.
+		 */
+		if (!is_bcast_da && req->frame_len >= 10) {
+			uint8_t *da = &req->frame_data[4];
+
+			status = wma_injection_ensure_unicast_peer(wma_handle, da);
+			if (status == QDF_STATUS_E_BUSY) {
+				wma_debug("Unicast peer busy, deferring frame");
+				qdf_nbuf_free(wmi_buf);
+				return QDF_STATUS_E_BUSY;
+			}
+			if (status == QDF_STATUS_E_INVAL) {
+				/*
+				 * Group/zero addr — normal group path,
+				 * count as peer_not_found and continue.
+				 */
+				g_wma_injection_ctx.stats.peer_not_found++;
+				wma_debug("Unicast peer skipped (group/zero addr), using self-peer");
+			} else if (QDF_IS_STATUS_ERROR(status)) {
+				wma_warn("Unicast peer setup failed: %d, dropping",
+					 status);
+				qdf_nbuf_free(wmi_buf);
+				return status;
+			}
+		}
+
 		if (!inject_monitor_no_legacy_logged) {
 			wma_warn("Injection monitor: using hidden AP vdev %u for TX (monitor vdev %u)",
 				 g_inj_tx_vdev.vdev_id, vdev_id);
@@ -1714,6 +2085,7 @@ QDF_STATUS wma_send_injection_frame_to_fw(tp_wma_handle wma_handle,
 	status = wmi_mgmt_unified_cmd_send(wma_handle->wmi_handle, &mgmt_params);
 	if (!QDF_IS_STATUS_ERROR(status)) {
 		wmi_tx_ok = true;
+		g_wma_injection_ctx.stats.command_submitted++;
 		/*
 		 * LL path: firmware DMA-reads from the nbuf we passed as
 		 * tx_frame.  Track it so the completion handler can unmap
@@ -1801,13 +2173,16 @@ QDF_STATUS wma_handle_injection_fw_response(tp_wma_handle wma_handle,
 	switch (status) {
 	case WMI_MGMT_TX_COMP_TYPE_COMPLETE_OK:
 		status_str = "SUCCESS";
+		ctx->stats.tx_complete_ok++;
 		break;
 	case WMI_MGMT_TX_COMP_TYPE_DISCARD:
 		status_str = "DISCARDED";
+		ctx->stats.tx_complete_discard++;
 		ctx->stats.frames_dropped++;
 		break;
 	case WMI_MGMT_TX_COMP_TYPE_COMPLETE_NO_ACK:
 		status_str = "NO_ACK";
+		ctx->stats.tx_complete_no_ack++;
 		break;
 	case WMI_MGMT_TX_COMP_TYPE_INSPECT:
 		status_str = "INSPECT";
@@ -1923,6 +2298,12 @@ QDF_STATUS wma_deinit_injection_queue(tp_wma_handle wma_handle)
 }
 
 void wma_injection_pre_stop_cleanup(tp_wma_handle wma_handle)
+{
+}
+
+void wma_injection_notify_channel_change(tp_wma_handle wma_handle,
+					 uint8_t mon_vdev_id,
+					 uint32_t new_freq)
 {
 }
 

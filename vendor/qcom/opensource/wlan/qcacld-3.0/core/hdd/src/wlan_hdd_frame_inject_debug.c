@@ -64,7 +64,12 @@ static struct kobject *g_injection_sysfs_kobj = NULL;
  * @count: Buffer size
  * @ppos: File position
  *
- * This function displays injection statistics in debugfs.
+ * This function displays injection statistics in debugfs. It calls
+ * hdd_get_injection_stats() to get the aggregated HDD+WMA statistics
+ * rather than reading the per-adapter struct directly, so the debugfs
+ * output reflects real firmware TX outcomes (COMPLETE_OK, NO_ACK,
+ * DISCARD, TIMEOUT) instead of the optimistic "handed to WMA" numbers.
+ * (Ported from PoXiao777 commit c74906f09)
  *
  * Return: Number of bytes read, or error code
  */
@@ -75,70 +80,100 @@ static ssize_t hdd_injection_debugfs_stats_show(struct file *file,
 {
 	struct hdd_adapter *adapter = file->private_data;
 	struct hdd_injection_ctx *injection_ctx;
-	struct injection_stats *stats;
+	struct injection_stats aggregate_stats;
 	char *debug_buf;
 	int len = 0;
 	ssize_t ret;
+	QDF_STATUS status;
 
 	if (!adapter || !adapter->injection_ctx) {
 		return -EINVAL;
 	}
 
 	injection_ctx = adapter->injection_ctx;
-	stats = &injection_ctx->security_ctx.stats;
 
-	debug_buf = qdf_mem_malloc(2048);
+	debug_buf = qdf_mem_malloc(4096);
 	if (!debug_buf) {
 		return -ENOMEM;
 	}
 
-	len += scnprintf(debug_buf + len, 2048 - len,
+	/* Aggregate HDD + WMA stats through the public helper */
+	qdf_mem_zero(&aggregate_stats, sizeof(aggregate_stats));
+	status = hdd_get_injection_stats(adapter, &aggregate_stats);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		/* Fall back to raw HDD counters if aggregation fails */
+		qdf_mem_copy(&aggregate_stats,
+			     &injection_ctx->security_ctx.stats,
+			     sizeof(aggregate_stats));
+	}
+
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Frame Injection Statistics for %s:\n", adapter->dev->name);
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "================================\n");
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Frames Submitted:     %llu\n", stats->frames_submitted);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Frames Transmitted:   %llu\n", stats->frames_transmitted);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Frames Dropped:       %llu\n", stats->frames_dropped);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Validation Failures:  %llu\n", stats->validation_failures);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Permission Denials:   %llu\n", stats->permission_denials);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Rate Limit Hits:      %llu\n", stats->rate_limit_hits);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Queue Overflows:      %llu\n", stats->queue_overflows);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Firmware Errors:      %llu\n", stats->firmware_errors);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Last Inject Time:     %llu\n", stats->last_inject_time);
-	len += scnprintf(debug_buf + len, 2048 - len,
-			 "Total Inject Time:    %llu us\n", stats->total_inject_time);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Frames Submitted:     %llu\n", aggregate_stats.frames_submitted);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Frames Transmitted:   %llu\n", aggregate_stats.frames_transmitted);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Frames Dropped:       %llu\n", aggregate_stats.frames_dropped);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Validation Failures:  %llu\n", aggregate_stats.validation_failures);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Permission Denials:   %llu\n", aggregate_stats.permission_denials);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Rate Limit Hits:      %llu\n", aggregate_stats.rate_limit_hits);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Queue Overflows:      %llu\n", aggregate_stats.queue_overflows);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Firmware Errors:      %llu\n", aggregate_stats.firmware_errors);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Last Inject Time:     %llu\n", aggregate_stats.last_inject_time);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Total Inject Time:    %llu us\n", aggregate_stats.total_inject_time);
+
+	/*
+	 * Completion-driven counters driven by real firmware events.
+	 * These tell userspace what actually left the chip, not what
+	 * was optimistically handed to WMA.
+	 */
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "\nFirmware TX Completion Counters:\n");
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Command Submitted:    %llu\n", aggregate_stats.command_submitted);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "TX Complete OK:       %llu\n", aggregate_stats.tx_complete_ok);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "TX Complete No ACK:   %llu\n", aggregate_stats.tx_complete_no_ack);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "TX Complete Discard:  %llu\n", aggregate_stats.tx_complete_discard);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "TX Timeout:           %llu\n", aggregate_stats.tx_timeout);
+	len += scnprintf(debug_buf + len, 4096 - len,
+			 "Peer Not Found:       %llu\n", aggregate_stats.peer_not_found);
 
 	/* Add recovery context information */
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "\nError Recovery Information:\n");
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Recovery In Progress: %s\n",
 			 injection_ctx->recovery_ctx.recovery_in_progress ? "Yes" : "No");
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Recovery Attempts:    %u\n",
 			 injection_ctx->recovery_ctx.recovery_attempts);
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Consecutive Errors:   %u\n",
 			 injection_ctx->recovery_ctx.consecutive_errors);
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Last Error Type:      %d\n",
 			 injection_ctx->recovery_ctx.last_error.error_type);
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Last Error Code:      %d\n",
 			 injection_ctx->recovery_ctx.last_error.error_code);
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Last Error Time:      %llu\n",
 			 injection_ctx->recovery_ctx.last_error.timestamp);
-	len += scnprintf(debug_buf + len, 2048 - len,
+	len += scnprintf(debug_buf + len, 4096 - len,
 			 "Last Error Desc:      %s\n",
 			 injection_ctx->recovery_ctx.last_error.description);
 
