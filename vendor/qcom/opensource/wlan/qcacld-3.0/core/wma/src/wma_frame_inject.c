@@ -1282,7 +1282,6 @@ static void wma_injection_idle_reclaim_work_cb(void *arg)
 {
 	struct wma_injection_queue_ctx *ctx = &g_wma_injection_ctx;
 	tp_wma_handle wma_handle;
-	QDF_STATUS status;
 
 	if (!ctx->is_initialized || ctx->helper_stopping ||
 	    ctx->helper_transitioning || ctx->channel_settling ||
@@ -1314,9 +1313,7 @@ static void wma_injection_idle_reclaim_work_cb(void *arg)
 	if (g_inj_tx_vdev.created) {
 		wma_info("Injection idle: reclaiming TX helper vdev %u",
 			 g_inj_tx_vdev.vdev_id);
-		status = wma_injection_destroy_tx_vdev(wma_handle);
-		if (QDF_IS_STATUS_ERROR(status))
-			wma_warn("Injection idle: helper reclaim failed: %d", status);
+		wma_injection_destroy_tx_vdev(wma_handle);
 	}
 
 	qdf_mutex_release(&ctx->helper_lock);
