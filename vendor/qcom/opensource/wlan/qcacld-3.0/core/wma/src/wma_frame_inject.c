@@ -23,7 +23,7 @@
  * It provides infrastructure for queuing, processing, and transmitting
  * injected 802.11 frames through the firmware interface.
  */
-
+#include <target_if_vdev_mgr_tx_ops.h>
 #include "wma.h"
 #include "wma_frame_inject.h"
 #include "wlan_hdd_frame_inject.h"
@@ -437,11 +437,19 @@ wma_injection_ensure_tx_vdev(tp_wma_handle wma,
 	vstart.beacon_interval    = 0;
 	vstart.dtim_period        = 0;
 
+	/* Arm firmware-only response waiter BEFORE sending WMI */
+	target_if_vdev_mgr_fw_only_rsp_prepare(vid, START_RESPONSE_BIT);
+
 	status = wmi_unified_vdev_start_send(wma->wmi_handle, &vstart);
 	if (QDF_IS_STATUS_ERROR(status)) {
+		target_if_vdev_mgr_fw_only_rsp_cancel(vid);
 		wma_err("Injection TX vdev start failed: %d", status);
 		goto err_stop;
 	}
+
+	/* Wait for FW response (poll up to 200 ms) */
+	target_if_vdev_mgr_fw_only_rsp_wait(vid, 200);
+	target_if_vdev_mgr_fw_only_rsp_cancel(vid);
 
 	qdf_sleep(15);
 
@@ -610,13 +618,21 @@ static void wma_injection_destroy_tx_vdev(tp_wma_handle wma)
 	qdf_sleep(10);
 
 	/* 2. VDEV_STOP (we did VDEV_START during create) */
+	target_if_vdev_mgr_fw_only_rsp_prepare(g_inj_tx_vdev.vdev_id,
+					       STOP_RESPONSE_BIT);
 	wmi_unified_vdev_stop_send(wma->wmi_handle,
 				   g_inj_tx_vdev.vdev_id);
+	target_if_vdev_mgr_fw_only_rsp_wait(g_inj_tx_vdev.vdev_id, 200);
+	target_if_vdev_mgr_fw_only_rsp_cancel(g_inj_tx_vdev.vdev_id);
 	qdf_sleep(10);
 
 	/* 3. VDEV_DELETE */
+	target_if_vdev_mgr_fw_only_rsp_prepare(g_inj_tx_vdev.vdev_id,
+					       DELETE_RESPONSE_BIT);
 	wmi_unified_vdev_delete_send(wma->wmi_handle,
 				     g_inj_tx_vdev.vdev_id);
+	target_if_vdev_mgr_fw_only_rsp_wait(g_inj_tx_vdev.vdev_id, 200);
+	target_if_vdev_mgr_fw_only_rsp_cancel(g_inj_tx_vdev.vdev_id);
 	qdf_sleep(10);
 
 	wma_info("Injection TX helper vdev destroyed: vdev_id=%u",

@@ -131,4 +131,61 @@ QDF_STATUS
 target_if_vdev_mgr_rsp_timer_start(struct wlan_objmgr_psoc *psoc,
 				   struct vdev_response_timer *vdev_rsp,
 				   enum wlan_vdev_mgr_tgt_if_rsp_bit set_bit);
+
+/**
+ * target_if_vdev_mgr_fw_only_rsp_prepare() - Arm response waiter for a
+ *                                             firmware-only vdev
+ * @vdev_id: vdev id (must be < WLAN_UMAC_PSOC_MAX_VDEVS)
+ * @expected_rsp_bit: response bit expected (START/STOP/DELETE)
+ *
+ * Firmware-only vdevs (e.g. the injection helper STA) do not have a
+ * wlan_objmgr_vdev backing them, so the normal vdev_mgr response timer
+ * cannot be used.  This function arms a lightweight atomic waiter that
+ * the start/stop response handlers check before treating the response
+ * as belonging to a normal vdev.
+ */
+void target_if_vdev_mgr_fw_only_rsp_prepare(uint8_t vdev_id,
+					    uint32_t expected_rsp_bit);
+
+/**
+ * target_if_vdev_mgr_fw_only_rsp_wait() - Wait for a firmware-only vdev
+ *                                         response
+ * @vdev_id: vdev id
+ * @timeout_ms: maximum wait in milliseconds
+ *
+ * Return: QDF_STATUS_SUCCESS if the expected response arrived in time,
+ *         QDF_STATUS_E_TIMEOUT otherwise.
+ */
+QDF_STATUS target_if_vdev_mgr_fw_only_rsp_wait(uint8_t vdev_id,
+					       uint32_t timeout_ms);
+
+/**
+ * target_if_vdev_mgr_fw_only_rsp_cancel() - Disarm the firmware-only vdev
+ *                                           response waiter
+ * @vdev_id: vdev id
+ */
+void target_if_vdev_mgr_fw_only_rsp_cancel(uint8_t vdev_id);
+
+/**
+ * target_if_vdev_mgr_fw_only_rsp_complete() - Mark firmware-only vdev
+ *                                             response as received
+ * @vdev_id: vdev id
+ * @rsp_status: response bit that completed
+ */
+void target_if_vdev_mgr_fw_only_rsp_complete(uint8_t vdev_id,
+					     uint32_t rsp_status);
+
+/**
+ * target_if_vdev_mgr_is_firmware_only_vdev() - Detect a firmware-only vdev
+ * @psoc: psoc handle
+ * @vdev_id: vdev id
+ * @rsp_status: response bit being processed
+ *
+ * Return: true when the vdev_id belongs to a firmware-only vdev whose
+ *         response must be short-circuited, false otherwise.
+ */
+bool target_if_vdev_mgr_is_firmware_only_vdev(struct wlan_objmgr_psoc *psoc,
+					      uint8_t vdev_id,
+					      uint32_t rsp_status);
+
 #endif /* __TARGET_IF_VDEV_MGR_TX_OPS_H__ */
