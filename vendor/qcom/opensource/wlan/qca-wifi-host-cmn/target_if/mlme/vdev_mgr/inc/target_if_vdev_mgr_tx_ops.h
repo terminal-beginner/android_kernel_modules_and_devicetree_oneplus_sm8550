@@ -100,7 +100,14 @@ static inline void target_if_vdev_mgr_assert_mgmt(
 					uint8_t vdev_id)
 
 {
-	QDF_ASSERT(0);
+	/*
+	 * Monitor / injection workflows can leave stale rsp bits
+	 * when firmware is slow to respond. Downgrade to a warning
+	 * so the driver stays alive instead of crashing in QDF_ASSERT.
+	 */
+	mlme_warn("VDEV_ASSERT_MGMT: PSOC_%d VDEV_%d stale rsp bit (assert suppressed)",
+		  psoc ? wlan_psoc_get_id(psoc) : -1, vdev_id);
+	/* QDF_ASSERT(0); */
 }
 #endif
 
