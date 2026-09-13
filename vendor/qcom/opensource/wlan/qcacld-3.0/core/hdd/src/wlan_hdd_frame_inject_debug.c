@@ -477,8 +477,13 @@ static struct attribute_group hdd_injection_sysfs_attr_group = {
  * ============================================================ */
 static bool hdd_injection_is_null_adapter(struct hdd_adapter *adapter)
 {
-	if (!adapter || !adapter->dev || !adapter->dev->name)
+	if (!adapter || !adapter->dev)
 		return true;
+	/*
+	 * dev->name is a char array (IFNAMSIZ bytes), never NULL.
+	 * strcmp() is safe here — if name is empty, strcmp just
+	 * returns non-zero.
+	 */
 	if (!strcmp(adapter->dev->name, "null"))
 		return true;
 	return false;
