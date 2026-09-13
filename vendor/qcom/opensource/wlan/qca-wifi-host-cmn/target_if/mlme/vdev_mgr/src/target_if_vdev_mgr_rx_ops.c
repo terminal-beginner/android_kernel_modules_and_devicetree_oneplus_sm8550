@@ -114,7 +114,7 @@ QDF_STATUS target_if_vdev_mgr_fw_only_rsp_wait(uint8_t vdev_id,
 		    QDF_STATUS_E_PENDING)
 			return qdf_atomic_read(
 				&target_if_fw_only_rsp[vdev_id].result);
-		qdf_mdelay(poll_ms);
+		qdf_sleep(poll_ms);
 		waited_ms += poll_ms;
 	}
 
@@ -126,7 +126,6 @@ bool target_if_vdev_mgr_is_firmware_only_vdev(struct wlan_objmgr_psoc *psoc,
 					      uint32_t rsp_status)
 {
 	uint32_t expected;
-	struct wlan_objmgr_vdev *vdev;
 
 	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
 		return false;
@@ -140,16 +139,16 @@ bool target_if_vdev_mgr_is_firmware_only_vdev(struct wlan_objmgr_psoc *psoc,
 		return false;
 
 	/*
-	 * Confirm there is genuinely no wlan_objmgr_vdev backing this id.
-	 * If a normal vdev exists, let the regular path handle it.
+	 * FIX: Do NOT call wlan_objmgr_get_vdev_by_id_from_psoc() here.
+	 * This function is invoked from target_if_vdev_mgr_rsp_timer_start()
+	 * which runs in timer/atomic context.  wlan_objmgr_get_vdev_*()
+	 * takes the objmgr lock which can sleep -> deadlock / crash.
+	 *
+	 * The 'expected' bit being set is sufficient to identify a
+	 * firmware-only vdev: it is only armed by
+	 * target_if_vdev_mgr_fw_only_rsp_prepare() in the injection path,
+	 * and always cleared by _cancel()/timeout handlers.
 	 */
-	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(
-		    psoc, vdev_id, WLAN_VDEV_TARGET_IF_ID);
-	if (vdev) {
-		wlan_objmgr_vdev_release_ref(vdev, WLAN_VDEV_TARGET_IF_ID);
-		return false;
-	}
-
 	return true;
 }
 

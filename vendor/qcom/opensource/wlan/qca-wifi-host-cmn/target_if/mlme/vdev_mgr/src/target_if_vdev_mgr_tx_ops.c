@@ -126,7 +126,8 @@ target_if_vdev_mgr_rsp_timer_start(struct wlan_objmgr_psoc *psoc,
 				 * torn down via raw WMI without a rsp timer.
 				 * Skip the panic and just clear the stale bit.
 				 */
-				if (!target_if_vdev_mgr_is_firmware_only_vdev(
+				if (qdf_timer_active(&vdev_rsp->rsp_timer) &&
+				    !target_if_vdev_mgr_is_firmware_only_vdev(
 						psoc, vdev_id, rsp_pos))
 					target_if_vdev_mgr_assert_mgmt(psoc,
 								       vdev_id);
@@ -146,7 +147,8 @@ target_if_vdev_mgr_rsp_timer_start(struct wlan_objmgr_psoc *psoc,
 		 * Firmware-only vdevs skip the panic, but still need to
 		 * clear the stale response bit.
 		 */
-		if (!target_if_vdev_mgr_is_firmware_only_vdev(psoc,
+		if (qdf_timer_active(&vdev_rsp->rsp_timer) &&
+		    !target_if_vdev_mgr_is_firmware_only_vdev(psoc,
 							      vdev_rsp->vdev_id,
 							      set_bit))
 			target_if_vdev_mgr_assert_mgmt(psoc, vdev_rsp->vdev_id);

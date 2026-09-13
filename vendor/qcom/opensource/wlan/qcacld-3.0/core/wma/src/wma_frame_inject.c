@@ -668,6 +668,7 @@ void wma_injection_pre_stop_cleanup(tp_wma_handle wma_handle)
 	if (!wma_handle->wmi_handle) {
 		/* WMI already gone – just clear host state */
 		wma_warn("WMI down, clearing injection vdev state only");
+		target_if_vdev_mgr_fw_only_rsp_cancel(g_inj_tx_vdev.vdev_id);
 		qdf_mem_zero(&g_inj_tx_vdev, sizeof(g_inj_tx_vdev));
 		return;
 	}
@@ -698,14 +699,22 @@ void wma_injection_pre_stop_cleanup(tp_wma_handle wma_handle)
 	}
 	qdf_sleep(10);
 
-	/* 2. VDEV_STOP (we did VDEV_START during create) */
+	/* 2. VDEV_STOP with fw-only rsp arm (mirrors destroy_tx_vdev) */
+	target_if_vdev_mgr_fw_only_rsp_prepare(g_inj_tx_vdev.vdev_id,
+					       STOP_RESPONSE_BIT);
 	wmi_unified_vdev_stop_send(wma_handle->wmi_handle,
 				   g_inj_tx_vdev.vdev_id);
+	target_if_vdev_mgr_fw_only_rsp_wait(g_inj_tx_vdev.vdev_id, 200);
+	target_if_vdev_mgr_fw_only_rsp_cancel(g_inj_tx_vdev.vdev_id);
 	qdf_sleep(10);
 
-	/* 3. VDEV_DELETE */
+	/* 3. VDEV_DELETE with fw-only rsp arm */
+	target_if_vdev_mgr_fw_only_rsp_prepare(g_inj_tx_vdev.vdev_id,
+					       DELETE_RESPONSE_BIT);
 	wmi_unified_vdev_delete_send(wma_handle->wmi_handle,
 				     g_inj_tx_vdev.vdev_id);
+	target_if_vdev_mgr_fw_only_rsp_wait(g_inj_tx_vdev.vdev_id, 200);
+	target_if_vdev_mgr_fw_only_rsp_cancel(g_inj_tx_vdev.vdev_id);
 	qdf_sleep(10);
 
 	wma_info("Pre-stop cleanup: injection helper vdev destroyed: vdev_id=%u",
