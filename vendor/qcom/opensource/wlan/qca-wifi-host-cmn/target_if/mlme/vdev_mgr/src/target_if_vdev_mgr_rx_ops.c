@@ -37,6 +37,121 @@
 #include <target_if_cm_roam_offload.h>
 #endif
 
+/*
+ * Firmware-only vdev response tracking.
+ *
+ * The injection helper STA vdev is created directly via WMI without a
+ * wlan_objmgr_vdev backing it.  When firmware sends its start/stop
+ * response, the normal handler would call
+ * target_if_vdev_mgr_rsp_timer_stop() on an uninitialised timer and
+ * assert.  Track the expected response in a small atomic waiter and
+ * short-circuit the handler when the vdev_id matches.
+ */
+struct target_if_fw_only_rsp_state {
+	qdf_atomic_t expected;   /* rsp_bit expected */
+	qdf_atomic_t completed;  /* rsp_bit completed */
+	qdf_atomic_t result;     /* QDF_STATUS of the wait */
+};
+
+static struct target_if_fw_only_rsp_state
+	target_if_fw_only_rsp[WLAN_UMAC_PSOC_MAX_VDEVS];
+
+static bool target_if_vdev_mgr_fw_only_rsp_valid(uint8_t vdev_id)
+{
+	return vdev_id < WLAN_UMAC_PSOC_MAX_VDEVS;
+}
+
+void target_if_vdev_mgr_fw_only_rsp_prepare(uint8_t vdev_id,
+					    uint32_t expected_rsp_bit)
+{
+	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
+		return;
+
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].expected,
+		       expected_rsp_bit);
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].completed, 0);
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].result,
+		       QDF_STATUS_E_PENDING);
+}
+
+void target_if_vdev_mgr_fw_only_rsp_cancel(uint8_t vdev_id)
+{
+	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
+		return;
+
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].expected, 0);
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].completed, 0);
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].result,
+		       QDF_STATUS_E_CANCELED);
+}
+
+void target_if_vdev_mgr_fw_only_rsp_complete(uint8_t vdev_id,
+					     uint32_t rsp_status)
+{
+	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
+		return;
+
+	if (!qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].expected))
+		return;
+
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].completed,
+		       rsp_status);
+	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].result,
+		       QDF_STATUS_SUCCESS);
+}
+
+QDF_STATUS target_if_vdev_mgr_fw_only_rsp_wait(uint8_t vdev_id,
+					       uint32_t timeout_ms)
+{
+	uint32_t waited_ms = 0;
+	const uint32_t poll_ms = 5;
+
+	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
+		return QDF_STATUS_E_INVAL;
+
+	while (waited_ms < timeout_ms) {
+		if (qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].result) !=
+		    QDF_STATUS_E_PENDING)
+			return qdf_atomic_read(
+				&target_if_fw_only_rsp[vdev_id].result);
+		qdf_sleep(poll_ms);
+		waited_ms += poll_ms;
+	}
+
+	return QDF_STATUS_E_TIMEOUT;
+}
+
+bool target_if_vdev_mgr_is_firmware_only_vdev(struct wlan_objmgr_psoc *psoc,
+					      uint8_t vdev_id,
+					      uint32_t rsp_status)
+{
+	uint32_t expected;
+
+	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
+		return false;
+
+	expected = qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].expected);
+	if (!expected)
+		return false;
+
+	/* Only match if the expected bit is what the handler is processing */
+	if (!(expected & rsp_status))
+		return false;
+
+	/*
+	 * FIX: Do NOT call wlan_objmgr_get_vdev_by_id_from_psoc() here.
+	 * This function is invoked from target_if_vdev_mgr_rsp_timer_start()
+	 * which runs in timer/atomic context.  wlan_objmgr_get_vdev_*()
+	 * takes the objmgr lock which can sleep -> deadlock / crash.
+	 *
+	 * The 'expected' bit being set is sufficient to identify a
+	 * firmware-only vdev: it is only armed by
+	 * target_if_vdev_mgr_fw_only_rsp_prepare() in the injection path,
+	 * and always cleared by _cancel()/timeout handlers.
+	 */
+	return true;
+}
+
 static inline
 void target_if_vdev_mgr_handle_recovery(struct wlan_objmgr_psoc *psoc,
 					uint8_t vdev_id,
@@ -321,6 +436,28 @@ static int target_if_vdev_mgr_start_response_handler(ol_scn_t scn,
 	}
 
 	vdev_id = vdev_start_resp.vdev_id;
+
+	/*
+	 * Firmware-only vdev (injection helper STA): mark response as
+	 * complete and return without touching the normal rsp timer.
+	 * The correct bit depends on whether this is a start or restart.
+	 */
+	{
+		uint32_t expected = (vdev_start_resp.resp_type ==
+				     WMI_HOST_VDEV_RESTART_RESP_EVENT) ?
+				    RESTART_RESPONSE_BIT :
+				    START_RESPONSE_BIT;
+
+		if (target_if_vdev_mgr_is_firmware_only_vdev(psoc, vdev_id,
+							     expected)) {
+			mlme_debug("Ignoring start response for firmware-only VDEV_%u",
+				   vdev_id);
+			target_if_vdev_mgr_fw_only_rsp_complete(vdev_id,
+								expected);
+			return 0;
+		}
+	}
+
 	vdev_rsp = rx_ops->psoc_get_vdev_response_timer_info(psoc, vdev_id);
 	if (!vdev_rsp) {
 		mlme_err("vdev response timer is null VDEV_%d PSOC_%d",
@@ -388,6 +525,19 @@ static int target_if_vdev_mgr_stop_response_handler(ol_scn_t scn,
 		return -EINVAL;
 	}
 
+	/*
+	 * Firmware-only vdev (injection helper STA): complete the waiter
+	 * and return without touching the normal rsp timer.
+	 */
+	if (target_if_vdev_mgr_is_firmware_only_vdev(psoc, vdev_id,
+						     STOP_RESPONSE_BIT)) {
+		mlme_debug("Ignoring stop response for firmware-only VDEV_%u",
+			   vdev_id);
+		target_if_vdev_mgr_fw_only_rsp_complete(vdev_id,
+							STOP_RESPONSE_BIT);
+		return 0;
+	}
+
 	vdev_rsp = rx_ops->psoc_get_vdev_response_timer_info(psoc, vdev_id);
 	if (!vdev_rsp) {
 		mlme_err("vdev response timer is null VDEV_%d PSOC_%d",
@@ -448,6 +598,20 @@ static int target_if_vdev_mgr_delete_response_handler(ol_scn_t scn,
 	if (wmi_extract_vdev_delete_resp(wmi_handle, data, &vdev_del_resp)) {
 		mlme_err("WMI extract failed");
 		return -EINVAL;
+	}
+
+	/*
+	 * Firmware-only vdev (injection helper STA): complete the waiter
+	 * and return without touching the normal rsp timer.
+	 */
+	if (target_if_vdev_mgr_is_firmware_only_vdev(psoc,
+						     vdev_del_resp.vdev_id,
+						     DELETE_RESPONSE_BIT)) {
+		mlme_debug("Ignoring delete response for firmware-only VDEV_%u",
+			   vdev_del_resp.vdev_id);
+		target_if_vdev_mgr_fw_only_rsp_complete(vdev_del_resp.vdev_id,
+							DELETE_RESPONSE_BIT);
+		return 0;
 	}
 
 	vdev_rsp = rx_ops->psoc_get_vdev_response_timer_info(psoc,
