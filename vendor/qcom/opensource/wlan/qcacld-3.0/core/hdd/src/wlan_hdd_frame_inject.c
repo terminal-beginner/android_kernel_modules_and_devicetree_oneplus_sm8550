@@ -786,15 +786,19 @@ inject_done:
 				hdd_inject_err("Failed to queue frame to WMA: %d", wma_status);
 			}
 		} else {
-			/* Fallback: just update statistics if WMA handle not available */
+			/*
+			 * WMA handle not available - drop the frame instead of
+			 * faking a transmission. Counting it as "transmitted"
+			 * used to mislead userspace tools (aireplay-ng --test)
+			 * into thinking the NIC accepted the frame when
+			 * nothing actually left the host.
+			 * (Ported from PoXiao777 commit c74906f09)
+			 */
 			req->complete_time = qdf_get_log_timestamp();
-			hdd_update_injection_stats(injection_ctx->adapter, HDD_INJECTION_STAT_FRAMES_TRANSMITTED, 1);
-
-			/* Calculate and update latency statistics */
-			total_latency = req->complete_time - req->submit_time;
-			hdd_update_injection_latency(injection_ctx->adapter, total_latency);
-
-			hdd_inject_warn("WMA handle not available, simulating transmission");
+			hdd_update_injection_stats(injection_ctx->adapter,
+						   HDD_INJECTION_STAT_FRAMES_DROPPED, 1);
+			hdd_inject_warn("WMA handle not available, dropping frame session_id=%u",
+					req->session_id);
 		}
 
 		hdd_inject_debug("Processed injection request: session_id=%u",
@@ -1607,6 +1611,19 @@ QDF_STATUS hdd_get_injection_stats(struct hdd_adapter *adapter,
 			if (wma_stats.frames_processed > 0) {
 				stats->total_inject_time += wma_stats.total_queue_time;
 			}
+
+			/*
+			 * Aggregate completion-driven counters so debugfs
+			 * shows real firmware TX outcomes instead of the
+			 * optimistic "handed to WMA" numbers.
+			 * (Ported from PoXiao777 commit c74906f09)
+			 */
+			stats->command_submitted += wma_stats.command_submitted;
+			stats->tx_complete_ok += wma_stats.tx_complete_ok;
+			stats->tx_complete_no_ack += wma_stats.tx_complete_no_ack;
+			stats->tx_complete_discard += wma_stats.tx_complete_discard;
+			stats->tx_timeout += wma_stats.tx_timeout;
+			stats->peer_not_found += wma_stats.peer_not_found;
 		} else {
 			hdd_inject_warn("Failed to get WMA statistics: %d", status);
 		}

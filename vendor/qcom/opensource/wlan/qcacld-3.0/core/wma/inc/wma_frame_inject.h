@@ -95,8 +95,8 @@ struct wma_injection_fw_error_info {
 /**
  * struct wma_injection_queue_stats - WMA injection queue statistics
  * @frames_queued: Total frames queued
- * @frames_processed: Total frames processed
- * @frames_dropped: Frames dropped due to queue overflow
+ * @frames_processed: Frames confirmed by firmware with COMPLETE_OK
+ * @frames_dropped: Frames dropped due to queue overflow or FW DISCARD
  * @queue_overflows: Number of queue overflow events
  * @max_queue_depth: Maximum queue depth reached
  * @total_queue_time: Total time frames spent in queue (microseconds)
@@ -104,6 +104,16 @@ struct wma_injection_fw_error_info {
  * @fw_timeouts: Number of firmware timeouts
  * @fw_retries: Number of firmware retries
  * @last_fw_error: Information about last firmware error
+ * @command_submitted: WMI management commands accepted by the host WMI layer
+ * @tx_complete_ok: Firmware completions reporting COMPLETE_OK
+ * @tx_complete_no_ack: Firmware completions reporting COMPLETE_NO_ACK
+ * @tx_complete_discard: Firmware completions reporting DISCARD
+ * @tx_timeout: Submitted commands with no completion before the timeout
+ * @peer_not_found: Unicast frames rejected because no associated peer exists
+ *
+ * These counters are driven by real firmware completions rather than the
+ * optimistic "frame handed to WMI" path so the debugfs output reflects
+ * what actually left the chip.
  */
 struct wma_injection_queue_stats {
 	uint64_t frames_queued;
@@ -116,6 +126,13 @@ struct wma_injection_queue_stats {
 	uint64_t fw_timeouts;
 	uint64_t fw_retries;
 	struct wma_injection_fw_error_info last_fw_error;
+	/* Completion-driven counters (ported from PoXiao777 commit c74906f09) */
+	uint64_t command_submitted;
+	uint64_t tx_complete_ok;
+	uint64_t tx_complete_no_ack;
+	uint64_t tx_complete_discard;
+	uint64_t tx_timeout;
+	uint64_t peer_not_found;
 };
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
@@ -162,6 +179,9 @@ void wma_injection_pre_stop_cleanup(tp_wma_handle wma_handle);
  * Proactively re-tunes the hidden injection TX helper vdev to @new_freq.
  * If no helper vdev exists yet this is a no-op (it will be created lazily
  * on the first injection attempt at the new frequency).
+ *
+ * Rapid monitor channel hopping is debounced: helper creation is deferred
+ * until the channel has been stable for WMA_INJECTION_CHANNEL_SETTLE_MS.
  */
 void wma_injection_notify_channel_change(tp_wma_handle wma_handle, uint8_t mon_vdev_id, uint32_t new_freq);
 
@@ -350,6 +370,12 @@ static inline QDF_STATUS wma_deinit_injection_queue(tp_wma_handle wma_handle)
 }
 
 static inline void wma_injection_pre_stop_cleanup(tp_wma_handle wma_handle)
+{
+}
+
+static inline void wma_injection_notify_channel_change(tp_wma_handle wma_handle,
+							uint8_t mon_vdev_id,
+							uint32_t new_freq)
 {
 }
 

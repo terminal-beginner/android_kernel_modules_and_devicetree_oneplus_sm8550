@@ -6729,6 +6729,12 @@ static int hdd_vdev_destroy_event_wait(struct hdd_context *hdd_ctx,
 			       WLAN_LOG_INDICATOR_HOST_DRIVER,
 			       WLAN_LOG_REASON_VDEV_DELETE_RSP_TIMED_OUT,
 			       true, true);
+		/*
+		 * FIX: reset the completion so a subsequent destroy attempt
+		 * (after monitor->STA mode change or SSR reload) does not
+		 * return the stale completion immediately.
+		 */
+		INIT_COMPLETION(adapter->vdev_destroy_event);
 		return -EINVAL;
 	}
 
