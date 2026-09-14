@@ -91,8 +91,9 @@ void target_if_vdev_mgr_fw_only_rsp_complete(uint8_t vdev_id,
 	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
 		return;
 
-	if (!qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].expected))
-		return;
+        if (qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].result) !=
+            QDF_STATUS_E_PENDING)
+                return;
 
 	qdf_atomic_set(&target_if_fw_only_rsp[vdev_id].completed,
 		       rsp_status);
@@ -125,18 +126,21 @@ bool target_if_vdev_mgr_is_firmware_only_vdev(struct wlan_objmgr_psoc *psoc,
 					      uint8_t vdev_id,
 					      uint32_t rsp_status)
 {
-	uint32_t expected;
+        uint32_t expected;
+        uint32_t result;
 
-	if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
-		return false;
+        if (!target_if_vdev_mgr_fw_only_rsp_valid(vdev_id))
+                return false;
 
-	expected = qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].expected);
-	if (!expected)
-		return false;
+        expected = qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].expected);
+        result = qdf_atomic_read(&target_if_fw_only_rsp[vdev_id].result);
 
-	/* Only match if the expected bit is what the handler is processing */
-	if (!(expected & rsp_status))
-		return false;
+        if (result != QDF_STATUS_E_PENDING)
+                return false;
+
+        if (expected != rsp_status)
+                return false;
+
 
 	/*
 	 * FIX: Do NOT call wlan_objmgr_get_vdev_by_id_from_psoc() here.
