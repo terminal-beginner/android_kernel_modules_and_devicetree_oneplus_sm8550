@@ -137,4 +137,15 @@ static inline void qdf_timer_free(qdf_timer_t *timer)
 	__qdf_timer_free(timer);
 }
 
+/**
+ * qdf_timer_active() - check if timer is currently armed/running
+ * @timer: Timer object pointer
+ *
+ * Return: true if timer is pending (armed), false otherwise
+ */
+static inline bool qdf_timer_active(qdf_timer_t *timer)
+{
+	return timer_pending(&timer->os_timer);
+}
+
 #endif /* _QDF_TIMER_H */
