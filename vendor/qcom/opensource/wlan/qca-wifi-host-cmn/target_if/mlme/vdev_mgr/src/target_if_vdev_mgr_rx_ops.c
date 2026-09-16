@@ -478,14 +478,15 @@ static int target_if_vdev_mgr_start_response_handler(ol_scn_t scn,
 							   START_RESPONSE_BIT);
 
 	if (QDF_IS_STATUS_ERROR(status)) {
-		mlme_err("PSOC_%d VDEV_%d: VDE MGR RSP Timer stop failed",
-			 psoc->soc_objmgr.psoc_id, vdev_id);
-		goto err;
+		mlme_warn("PSOC_%d VDEV_%d: START rsp arrived late, bit already clear",
+			  psoc->soc_objmgr.psoc_id, vdev_id);
+	} else {
+		mlme_debug("PSOC_%d VDEV_%d: START rsp timer stopped",
+			   psoc->soc_objmgr.psoc_id, vdev_id);
 	}
 
 	status = rx_ops->vdev_mgr_start_response(psoc, &vdev_start_resp);
 
-err:
 	return qdf_status_to_os_return(status);
 }
 
@@ -553,15 +554,22 @@ static int target_if_vdev_mgr_stop_response_handler(ol_scn_t scn,
 						   STOP_RESPONSE_BIT);
 
 	if (QDF_IS_STATUS_ERROR(status)) {
-		mlme_err("PSOC_%d VDEV_%d: VDE MGR RSP Timer stop failed",
-			 psoc->soc_objmgr.psoc_id, vdev_id);
-		goto err;
+		/*
+		 * Late stop response: bit already cleared by an earlier
+		 * recovery pass (e.g. DELETE preempted pending STOP).
+		 * Not fatal — process the response anyway so the state
+		 * machine can move forward.
+		 */
+		mlme_warn("PSOC_%d VDEV_%d: STOP rsp arrived late, bit already clear",
+			  psoc->soc_objmgr.psoc_id, vdev_id);
+	} else {
+		mlme_debug("PSOC_%d VDEV_%d: STOP rsp timer stopped",
+			   psoc->soc_objmgr.psoc_id, vdev_id);
 	}
 
 	rsp.vdev_id = vdev_id;
 	status = rx_ops->vdev_mgr_stop_response(psoc, &rsp);
 
-err:
 	return qdf_status_to_os_return(status);
 }
 
@@ -631,14 +639,20 @@ static int target_if_vdev_mgr_delete_response_handler(ol_scn_t scn,
 						DELETE_RESPONSE_BIT);
 
 	if (QDF_IS_STATUS_ERROR(status)) {
-		mlme_err("PSOC_%d VDEV_%d: VDE MGR RSP Timer stop failed",
-			 wlan_psoc_get_id(psoc), vdev_del_resp.vdev_id);
-		goto err;
+		/*
+		 * Late delete response: bit already cleared. Still
+		 * process the response so vdev teardown completes.
+		 */
+		mlme_warn("PSOC_%d VDEV_%d: DELETE rsp arrived late, bit already clear",
+			  wlan_psoc_get_id(psoc), vdev_del_resp.vdev_id);
+	} else {
+		mlme_debug("PSOC_%d VDEV_%d: DELETE rsp timer stopped",
+			   wlan_psoc_get_id(psoc), vdev_del_resp.vdev_id);
 	}
 
 	status = rx_ops->vdev_mgr_delete_response(psoc, &vdev_del_resp);
 	target_if_wake_lock_timeout_release(psoc, DELETE_WAKELOCK);
-err:
+
 	return qdf_status_to_os_return(status);
 }
 
