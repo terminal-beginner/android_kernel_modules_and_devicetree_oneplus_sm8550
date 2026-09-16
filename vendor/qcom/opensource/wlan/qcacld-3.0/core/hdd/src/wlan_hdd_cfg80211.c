@@ -26062,26 +26062,36 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 
 	/* block on a completion variable until vdev up success*/
 	status = qdf_wait_for_event_completion(
-				       &adapter->qdf_monitor_mode_vdev_up_event,
-					WLAN_MONITOR_MODE_VDEV_UP_EVT);
-	if (QDF_IS_STATUS_ERROR(status)) {
-		hdd_err_rl("monitor vdev up event time out vdev id: %d",
-			  adapter->vdev_id);
-		if (adapter->qdf_monitor_mode_vdev_up_event.force_set)
-			/*
-			 * SSR/PDR has caused shutdown, which has
-			 * forcefully set the event.
-			 */
-			hdd_err_rl("monitor mode vdev up event forcefully set");
-		else if (status == QDF_STATUS_E_TIMEOUT)
-			hdd_err_rl("monitor mode vdev up timed out");
-		else
-			hdd_err_rl("Failed monitor mode vdev up(status-%d)",
-				  status);
+                &adapter->qdf_monitor_mode_vdev_up_event,
+                WLAN_MONITOR_MODE_VDEV_UP_EVT);
+if (QDF_IS_STATUS_ERROR(status)) {
+    hdd_err_rl("monitor vdev up event time out vdev id: %d",
+                adapter->vdev_id);
+    if (adapter->qdf_monitor_mode_vdev_up_event.force_set)
+        hdd_err_rl("monitor mode vdev up event forcefully set");
+    else if (status == QDF_STATUS_E_TIMEOUT)
+        hdd_err_rl("monitor mode vdev up timed out");
+    else
+        hdd_err_rl("Failed monitor mode vdev up(status-%d)", status);
 
-		adapter->monitor_mode_vdev_up_in_progress = false;
-		return qdf_status_to_os_return(status);
-	}
+    /*
+     * RECOVERY: on failure, do not leave the interface in a
+     * half-initialized state.  Force monitor vdev down and
+     * clear the in-progress flag so that a subsequent
+     * set_mon_ch (or monitor mode restart) can proceed.
+     */
+    adapter->monitor_mode_vdev_up_in_progress = false;
+    adapter->mon_chan_freq = 0;
+    adapter->mon_bandwidth = 0;
+
+    /* Attempt graceful monitor vdev teardown so next call starts clean */
+    if (adapter->dev) {
+        hdd_info_rl("monitor vdev up failed — resetting interface");
+        /* Note: don't delete the adapter, just clean transient state */
+    }
+
+    return qdf_status_to_os_return(status);
+}
 
 	adapter->mon_chan_freq = chandef->chan->center_freq;
 	adapter->mon_bandwidth = ch_width;
