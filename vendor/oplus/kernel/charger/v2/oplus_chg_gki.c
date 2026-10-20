@@ -444,10 +444,6 @@ static int usb_psy_get_prop(struct power_supply *psy,
 			rc = -ENOTSUPP;
 		break;
 	case POWER_SUPPLY_PROP_USB_TYPE:
-		if (chip->wired_type == OPLUS_CHG_USB_TYPE_UNKNOWN) {
-			oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_CHG_TYPE, &data, false);
-			chip->wired_type = data.intval;
-		}
 		pval->intval = oplus_to_psy_usb_type[chip->wired_type];
 #if IS_ENABLED(CONFIG_OPLUS_CHG_STATE_KEEP)
 		if (chip->keep_topic)
@@ -763,13 +759,8 @@ static int battery_psy_get_prop(struct power_supply *psy,
 			rc = -ENOTSUPP;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		if (is_support_parallel_battery(chip->gauge_topic) &&
-		    is_main_gauge_topic_available(chip))
-			rc = oplus_mms_get_item_data(chip->main_gauge_topic, GAUGE_ITEM_VOL_MAX,
-						     &data, false);
-		else
-			rc = oplus_mms_get_item_data(chip->gauge_topic,
-						     GAUGE_ITEM_VOL_MAX, &data, false);
+		rc = oplus_mms_get_item_data(chip->gauge_topic,
+					     GAUGE_ITEM_VOL_MAX, &data, false);
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 		pval->intval = data.intval;
 #else
@@ -777,13 +768,8 @@ static int battery_psy_get_prop(struct power_supply *psy,
 #endif
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
-		if (is_support_parallel_battery(chip->gauge_topic) &&
-		    is_main_gauge_topic_available(chip))
-			rc = oplus_mms_get_item_data(chip->main_gauge_topic, GAUGE_ITEM_VOL_MAX,
-						     &data, false);
-		else
-			rc = oplus_mms_get_item_data(chip->gauge_topic,
-						     GAUGE_ITEM_VOL_MAX, &data, false);
+		rc = oplus_mms_get_item_data(chip->gauge_topic,
+					     GAUGE_ITEM_VOL_MAX, &data, false);
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 		pval->intval = data.intval;
 #else

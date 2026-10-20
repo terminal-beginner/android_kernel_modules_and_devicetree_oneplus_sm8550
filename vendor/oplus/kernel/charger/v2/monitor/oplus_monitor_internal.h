@@ -17,7 +17,6 @@ struct dischg_avg {
 	int vbat;
 };
 #define DEEP_DISCHG_AVG_PROFILE_SIZE		36
-#define OPLUS_MONITOR_REVERSE_STR_MAX		300
 
 struct deep_dischg_profile {
 	int32_t vbat_10;
@@ -357,8 +356,7 @@ struct oplus_monitor {
 	unsigned long on_end_time;
 	unsigned long reverse_on_time;
 	unsigned long reverse_end_time;
-	char reverse_str[OPLUS_MONITOR_REVERSE_STR_MAX];
-	bool curr_derating_trig;
+	char reverse_str;
 };
 
 struct oplus_chg_into_l{

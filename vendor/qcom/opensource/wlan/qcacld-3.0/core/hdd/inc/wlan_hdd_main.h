@@ -858,6 +858,20 @@ struct hdd_ap_ctx {
 };
 
 /**
+ * struct hdd_monitor_ctx - Monitor specific information
+ * @freq: Monitor Frequency
+ * @bandwidth: Monitor bandwidth
+ * @cb_mode: Channel bonding
+ * @phy_mode: PHY mode
+ */
+struct hdd_monitor_ctx {
+	qdf_freq_t freq;
+	enum phy_ch_width bandwidth;
+	uint8_t cb_mode;
+	eCsrPhyMode phy_mode;
+};
+
+/**
  * struct hdd_scan_info - Per-adapter scan information
  * @scan_add_ie: Additional IE for scan
  * @default_scan_ies: Default scan IEs
@@ -1234,6 +1248,7 @@ struct hdd_adapter {
 	union {
 		struct hdd_station_ctx station;
 		struct hdd_ap_ctx ap;
+		struct hdd_monitor_ctx monitor;
 	} session;
 
 	qdf_atomic_t ch_switch_in_progress;
@@ -1375,6 +1390,7 @@ struct hdd_adapter {
 
 #define WLAN_HDD_GET_STATION_CTX_PTR(adapter) (&(adapter)->session.station)
 #define WLAN_HDD_GET_AP_CTX_PTR(adapter) (&(adapter)->session.ap)
+#define WLAN_HDD_GET_MONITOR_CTX_PTR(adapter) (&(adapter)->session.monitor)
 #define WLAN_HDD_GET_CTX(adapter) ((adapter)->hdd_ctx)
 #define WLAN_HDD_GET_HOSTAP_STATE_PTR(adapter) \
 				(&(adapter)->session.ap.hostapd_state)
@@ -1922,6 +1938,10 @@ enum wlan_state_ctrl_str_id {
  * @file_name:
  * @dbam_mode:
  * @bridgeaddr: Bridge MAC address
+ * @monitor_restore_work: work that reopens a station preserved for monitor use
+ * @monitor_restore_work_status: initialization state of monitor restore work
+ * @monitor_restore_iface: name of the preserved station interface
+ * @monitor_restore_pending: whether a preserved station needs reopening
  */
 struct hdd_context {
 	struct wlan_objmgr_psoc *psoc;
@@ -2205,6 +2225,12 @@ struct hdd_context {
 	enum coex_dbam_config_mode dbam_mode;
 #endif
 	uint8_t bridgeaddr[QDF_MAC_ADDR_SIZE];
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	qdf_work_t monitor_restore_work;
+	enum hdd_work_status monitor_restore_work_status;
+	char monitor_restore_iface[IFNAMSIZ];
+	bool monitor_restore_pending;
+#endif
 };
 
 /**
