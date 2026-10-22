@@ -1337,7 +1337,7 @@ int oplus_adfr_irq_handler(void *sde_encoder_phys, unsigned int irq_type)
 		if (priv_info) {
 			priv_info->rd_irq_interval = (rd_ptr_timestamp_us - last_rd_ptr_timestamp_us) / 1000;
 			if (priv_info->rd_irq_interval != last_rd_irq_interval) {   /* When TE > 10ms , print info */
-				pr_err("rd_ptr_irq interval=%lu ms\n", priv_info->rd_irq_interval);
+				pr_debug("rd_ptr_irq interval=%lu ms\n", priv_info->rd_irq_interval);
 				last_rd_irq_interval = priv_info->rd_irq_interval;
 			}
 		}
