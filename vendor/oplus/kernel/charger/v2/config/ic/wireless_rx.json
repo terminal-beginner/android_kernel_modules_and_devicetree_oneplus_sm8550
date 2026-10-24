@@ -361,13 +361,13 @@
                 "zh": "设置反充START命令"
             },
             "auto_debug_code": true,
-            "parameter_list": ["enum oplus_chg_wls_tx_start_type"],
+            "parameter_list": ["bool"],
             "parameter_desc": [
                 {
                     "range": "*",
                     "type": "in",
                     "desc": {
-                        "zh": "0:关闭反充START, 1:开启反充START, 2:开启无线手写笔反充START"
+                        "zh": "0:关闭反充START, 1:开启反充START"
                     }
                 }
 	    ],
@@ -827,132 +827,8 @@
                 "write": false,
                 "overwrite": false
             }
-        },
-        {
-            "lable": "OPLUS_IC_FUNC_RX_SET_SILENT",
-            "desc": {
-                "zh": "设置RX进入silent sleep模式"
-            },
-            "auto_debug_code": true,
-            "parameter_list": [],
-            "parameter_desc": [],
-            "vict": {
-                "read": false,
-                "write": false,
-                "overwrite": false
-            }
-        },
-        {
-            "lable": "OPLUS_IC_FUNC_RX_SEND_EPP_MATCH_Q",
-            "desc": {
-                "zh": "EPP模式下设置RX的Q值和F值"
-            },
-            "auto_debug_code": false,
-            "parameter_list": ["u8 []"],
-            "parameter_desc": [
-                {
-                    "range": "*",
-                    "type": "in",
-                    "desc": {
-                        "zh": "N/A"
-                    }
-                }
-            ],
-            "vict": {
-                "read": false,
-                "write": false,
-                "overwrite": false
-            }
-        },
-        {
-            "lable": "OPLUS_IC_FUNC_RX_GET_BLE_MAC_ADDR",
-            "desc": {
-                "zh": "获取无线手写笔蓝牙地址"
-            },
-            "auto_debug_code": true,
-            "parameter_list": ["u64 *"],
-            "parameter_desc": [
-                {
-                    "range": "*",
-                    "type": "out",
-                    "desc": {
-                        "zh": "无线手写笔蓝牙地址"
-                    }
-                }
-            ],
-            "vict": {
-                "read": false,
-                "write": false,
-                "overwrite": false
-            }
-        },
-        {
-            "lable": "OPLUS_IC_FUNC_RX_GET_WLSPEN_ID",
-            "desc": {
-                "zh": "获取无线手写笔ID"
-            },
-            "auto_debug_code": true,
-            "parameter_list": ["u8 *"],
-            "parameter_desc": [
-                {
-                    "range": "*",
-                    "type": "out",
-                    "desc": {
-                        "zh": "无线手写笔ID"
-                    }
-                }
-            ],
-            "vict": {
-                "read": false,
-                "write": false,
-                "overwrite": false
-            }
-        },
-        {
-            "lable": "OPLUS_IC_FUNC_RX_GET_WLSPEN_CHG_STATUS",
-            "desc": {
-                "zh": "获取无线手写笔充电状态"
-            },
-            "auto_debug_code": true,
-            "parameter_list": ["u8 *"],
-            "parameter_desc": [
-                {
-                    "range": "*",
-                    "type": "out",
-                    "desc": {
-                        "zh": "无线手写笔充电状态"
-                    }
-                }
-            ],
-            "vict": {
-                "read": false,
-                "write": false,
-                "overwrite": false
-            }
-        },
-        {
-            "lable": "OPLUS_IC_FUNC_RX_GET_AC_OV_FLAG",
-            "desc": {
-                "zh": "获取无线AC_OV标志位"
-            },
-            "auto_debug_code": true,
-            "parameter_list": ["int *"],
-            "parameter_desc": [
-                {
-                    "range": "*",
-                    "type": "out",
-                    "desc": {
-                        "zh": "0:非AC_OV，1:AC_OV"
-                    }
-                }
-            ],
-            "vict": {
-                "read": false,
-                "write": false,
-                "overwrite": false
-            }
         }
     ],
 
-    "version": "V3.2:42:4fd64be39355130df06d88dbee8ffef11264abc9dc9df16deafffaca240d33a6"
+    "version": "V3.0:36:d4920f482c47143a04eb10bc40f0858ac0fb910e78081c4fea6476d4364023e6"
 }

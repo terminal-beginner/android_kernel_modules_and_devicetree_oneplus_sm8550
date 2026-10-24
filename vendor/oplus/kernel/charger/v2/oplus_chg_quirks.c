@@ -73,7 +73,6 @@ struct oplus_quirks {
 	bool chg_quirks_support;
 	int keep_connect;
 	bool wired_online;
-	bool is_usb_type;
 	int irq_plugin;
 	int wired_type;
 	int diconnect_count_flag;
@@ -278,8 +277,14 @@ static void oplus_quirks_update_plugin_timer(struct oplus_quirks *chip, unsigned
 	}
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	mod_timer(&chip->update_plugin_timer, jiffies+msecs_to_jiffies(25000));
-#else
-	mod_timer(&chip->update_plugin_timer, jiffies + msecs_to_jiffies(ms));
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+	try_to_del_timer_sync(&chip->update_plugin_timer);
+	chip->update_plugin_timer.expires  = jiffies + msecs_to_jiffies(ms);
+	add_timer(&chip->update_plugin_timer);
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	timer_delete_sync(&chip->update_plugin_timer);
+	chip->update_plugin_timer.expires  = jiffies + msecs_to_jiffies(ms);
+	add_timer(&chip->update_plugin_timer);
 #endif
 }
 
@@ -297,8 +302,8 @@ static int oplus_quirks_notify_plugin(bool plugin)
 		return 0;
 	}
 
-	if ((chip->diconnect_count_flag >= CONNECT_ERROR_COUNT_LEVEL || chip->is_usb_type) && !plugin) {
-		chg_err("now is dcp disconnect three times or usb_type!\n");
+	if(chip->diconnect_count_flag >= CONNECT_ERROR_COUNT_LEVEL && !plugin) {
+		chg_err("now is dcp disconnect three times!\n");
 		return 0;
 	}
 
@@ -333,7 +338,7 @@ static int oplus_quirks_notify_plugin(bool plugin)
 			count = quirks_diconnect_count();
 			info->plugout_jiffies = jiffies;
 			chip->keep_connect_jiffies = jiffies;
-			cc_online = oplus_wired_get_hw_detect_recheck();
+			cc_online = oplus_wired_get_hw_detect();
 			chg_debug("%d:count:%d, cc_online:%d", __LINE__, count, cc_online);
 			oplus_quirks_set_awake(chip, PLUGOUT_WAKEUP_TIMEOUT);
 			if (cc_online == CC_DETECT_PLUGIN) {
@@ -451,12 +456,8 @@ static void oplus_quirks_wired_subs_callback(struct mms_subscribe *subs,
 			chip->wired_type = data.intval;
 			if (chip->wired_type == OPLUS_CHG_USB_TYPE_PD_SDP ||
 				chip->wired_type == OPLUS_CHG_USB_TYPE_SDP ||
-				chip->wired_type == OPLUS_CHG_USB_TYPE_CDP) {
-				chip->is_usb_type = true;
+				chip->wired_type == OPLUS_CHG_USB_TYPE_CDP)
 				clear_quirks_connect_status();
-			} else if (chip->wired_type != OPLUS_CHG_USB_TYPE_UNKNOWN) {
-				chip->is_usb_type = false;
-			}
 			break;
 		default:
 			break;
@@ -557,23 +558,14 @@ error:
 	return -1;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-static void oplus_chg_quirks_remove(struct platform_device *pdev)
-#else
 static int oplus_chg_quirks_remove(struct platform_device *pdev)
-#endif
 {
 	struct oplus_quirks *quirks_chip_init = platform_get_drvdata(pdev);
 	struct plug_info *info;
 	struct list_head *pos, *n;
 
-	if (!quirks_chip_init) {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
+	if (!quirks_chip_init)
 		return -ENOMEM;
-#else
-		return;
-#endif
-	}
 
 	list_for_each_safe(pos, n, &g_quirks_chip->plug_info_head.list) {
 		info = list_entry(pos, struct plug_info, list);
@@ -587,9 +579,7 @@ static int oplus_chg_quirks_remove(struct platform_device *pdev)
 		oplus_mms_unsubscribe(quirks_chip_init->wired_subs);
 	devm_kfree(&pdev->dev, quirks_chip_init);
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	return 0;
-#endif
 }
 
 static const struct of_device_id oplus_chg_quirks_match[] = {

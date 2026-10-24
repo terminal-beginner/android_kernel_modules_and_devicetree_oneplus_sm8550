@@ -81,7 +81,6 @@ void pe_snk_evaluate_capability_entry(struct pd_port *pd_port)
 	pd_handle_first_pd_command(pd_port);
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	pd_port->request_i = -1;
 	pd_dpm_snk_evaluate_caps(pd_port);
 	pd_port->pe_data.explicit_contract = false;
 #else
@@ -94,8 +93,6 @@ void pe_snk_select_capability_entry(struct pd_port *pd_port)
 {
 	struct pd_event *pd_event = pd_get_curr_pd_event(pd_port);
 	struct tcpc_device __maybe_unused *tcpc = pd_port->tcpc;
-	uint32_t chip_pid;
-	int rc;
 
 	PE_STATE_WAIT_MSG_HRESET_IF_TOUT(pd_port);
 
@@ -113,10 +110,6 @@ void pe_snk_select_capability_entry(struct pd_port *pd_port)
 
 	pd_send_sop_data_msg(pd_port,
 		PD_DATA_REQUEST, 1, &pd_port->last_rdo);
-
-	rc = tcpci_get_chip_pid(tcpc, &chip_pid);
-	if ((!rc && chip_pid == CPS_PID) && (pd_port->request_v_new == TCPC_VBUS_SOURCE_5V) && (pd_port->request_i_new == 0))
-		tcpci_sink_vbus(tcpc, TCP_VBUS_CTRL_PD, TCPC_VBUS_SINK_5V, 0);
 }
 
 void pe_snk_select_capability_exit(struct pd_port *pd_port)
@@ -173,7 +166,7 @@ void pe_snk_hard_reset_entry(struct pd_port *pd_port)
 	uint32_t chip_vid = 0;
  	pd_send_hard_reset(pd_port);
 	rv = tcpci_get_chip_vid(pd_port->tcpc, &chip_vid);
-	if (!rv && SOUTHCHIP_PD_VID == chip_vid) {
+	if (!rv &&  SOUTHCHIP_PD_VID == chip_vid) {
 		pd_enable_timer(pd_port, PD_TIMER_HARD_RESET_COMPLETE);
 	}
 }

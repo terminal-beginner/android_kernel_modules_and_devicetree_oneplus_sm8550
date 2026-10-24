@@ -2175,7 +2175,7 @@ static ssize_t mtk_chg_set_cv_write(struct file *file,
 static const struct proc_ops mtk_chg_set_cv_fops = {
 	.proc_open = mtk_chg_set_cv_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_set_cv_write,
 };
@@ -2239,7 +2239,7 @@ static ssize_t mtk_chg_current_cmd_write(struct file *file,
 static const struct proc_ops mtk_chg_current_cmd_fops = {
 	.proc_open = mtk_chg_current_cmd_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_current_cmd_write,
 };
@@ -2293,7 +2293,7 @@ static ssize_t mtk_chg_en_power_path_write(struct file *file,
 static const struct proc_ops mtk_chg_en_power_path_fops = {
 	.proc_open = mtk_chg_en_power_path_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_en_power_path_write,
 };
@@ -2357,7 +2357,7 @@ static ssize_t mtk_chg_en_safety_timer_write(struct file *file,
 static const struct proc_ops mtk_chg_en_safety_timer_fops = {
 	.proc_open = mtk_chg_en_safety_timer_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_en_safety_timer_write,
 };
@@ -4330,36 +4330,26 @@ static int chg_alg_event(struct notifier_block *notifier,
 #ifdef OPLUS_FEATURE_CHG_BASIC
 /* Add for charging */
 #define OPLUS_SVID 0x22D9
-#define DISCOVER_SVID_MAX_RETRIES 2
-#define DISCOVER_SVID_RETRY_DELAY 50
 uint32_t pd_svooc_abnormal_adapter[] = {
 	0x20002,
-	0x10002,
-	0x10001,
-	0x40001,
 };
 
 int oplus_get_adapter_svid(void)
 {
-	int i = 0, ret = 0;
+	int i = 0;
 	uint32_t vdos[VDO_MAX_NR] = {0};
 	struct tcpc_device *tcpc_dev = tcpc_dev_get_by_name("type_c_port0");
 	struct tcpm_svid_list svid_list = {0, {0}};
-	int disc_svid_retries = 0;
+	int recheck_svid = 0;
 
 	if (tcpc_dev == NULL || !g_oplus_chip) {
 		chg_err("tcpc_dev is null return\n");
 		return -1;
 	}
-
-	if (!oplus_is_vooc_project()) {
-		chg_err("device don't support vooc\n");
-		return -1;
-	}
-
+recheck:
 	tcpm_inquire_pd_partner_svids(tcpc_dev, &svid_list);
 	for (i = 0; i < svid_list.cnt; i++) {
-		chg_err("svid[%d] = %d\n", i, svid_list.svids[i]);
+		chg_err("svid[%d] = 0x%x\n", i, svid_list.svids[i]);
 		if (svid_list.svids[i] == OPLUS_SVID) {
 			g_oplus_chip->pd_svooc = true;
 			chg_err("match svid and this is oplus adapter\n");
@@ -4371,53 +4361,18 @@ int oplus_get_adapter_svid(void)
 	if ((vdos[0] & 0xFFFF) == OPLUS_SVID) {
 		g_oplus_chip->pd_svooc = true;
 		chg_err("match svid and this is oplus adapter 11\n");
-		for (i = 0; i < ARRAY_SIZE(pd_svooc_abnormal_adapter); i++) {
-			if (pd_svooc_abnormal_adapter[i] == vdos[2]) {
-				chg_err("This is oplus gnd abnormal adapter %x %x \n", vdos[1], vdos[2]);
-				g_oplus_chip->is_abnormal_adapter = true;
-				break;
-			}
-		}
 	}
 
-	if (!g_oplus_chip->pd_svooc) {
-		chg_info("get pd_svooc svid fail, retry to discover id/svid\n");
-
-		do {
-			ret = tcpm_dpm_vdm_discover_id(tcpc_dev, NULL);
-			if (ret != TCPM_SUCCESS) {
-				chg_err("failed to discover id %d\n", ret);
-			}
-			ret = tcpm_dpm_vdm_discover_svid(tcpc_dev, NULL);
-			if (ret != TCPM_SUCCESS) {
-				disc_svid_retries++;
-				chg_err("Failed to discover svid. ret %d retries: %d\n", ret, disc_svid_retries);
-				if (disc_svid_retries < DISCOVER_SVID_MAX_RETRIES) {
-					msleep(DISCOVER_SVID_RETRY_DELAY);
-				}
-			}
-		} while (ret != TCPM_SUCCESS && disc_svid_retries < DISCOVER_SVID_MAX_RETRIES);
-		if (disc_svid_retries >= DISCOVER_SVID_MAX_RETRIES)
-			goto GET_SVID_COMPLETE;
-
-		tcpm_inquire_pd_partner_svids(tcpc_dev, &svid_list);
-		for (i = 0; i < svid_list.cnt; i++) {
-			chg_err("svid[%d] = 0x%x\n", i, svid_list.svids[i]);
-			if (svid_list.svids[i] == OPLUS_SVID) {
-				g_oplus_chip->pd_svooc = true;
-				chg_err("retry get match svid and this is oplus adapter\n");
-				break;
-			}
-		}
-
-		tcpm_inquire_pd_partner_inform(tcpc_dev, vdos);
-		if ((vdos[0] & 0xFFFF) == OPLUS_SVID) {
-			g_oplus_chip->pd_svooc = true;
-			chg_err("retry get match svid and this is oplus adapter 11\n");
-		}
+	if (!g_oplus_chip->chg_ops->check_chrdet_status() &&
+	    g_oplus_chip->pd_svooc == true &&
+	    get_charger_ic_det(g_oplus_chip) == (1 << SC6607) &&
+	    recheck_svid < 3) {
+		msleep(10);
+		recheck_svid++;
+		if (g_oplus_chip->pd_svooc == false)
+			goto recheck;
 	}
 
-GET_SVID_COMPLETE:
 	return 0;
 }
 
@@ -4472,16 +4427,10 @@ static void oplus_chg_pps_get_source_cap(struct mtk_charger *info)
 {
 	struct tcpm_power_cap_val apdo_cap;
 	struct pd_source_cap_ext cap_ext;
-	struct oplus_chg_chip *chip = g_oplus_chip;
 	uint8_t cap_i = 0;
 	int ret = 0;
 	int idx = 0;
 	unsigned int i = 0;
-
-	if (!chip) {
-		pr_err("oplus_chip is null!\n");
-		return;
-	}
 
 	if (info->pd_type == MTK_PD_CONNECT_PE_READY_SNK_APDO) {
 		while (1) {
@@ -4495,16 +4444,15 @@ static void oplus_chg_pps_get_source_cap(struct mtk_charger *info)
 					__func__, ret);
 				break;
 			}
-			if (get_charger_ic_det(chip) != (1 << SC6607)) {
-				ret = tcpm_dpm_pd_get_source_cap_ext(info->tcpc,
-					NULL, &cap_ext);
-				if (ret == TCPM_SUCCESS)
-					info->srccap.pdp = cap_ext.source_pdp;
-				else {
-					info->srccap.pdp = 0;
-					pr_err("[%s] tcpm_dpm_pd_get_source_cap_ext failed(%d)\n",
-						__func__, ret);
-				}
+
+			ret = tcpm_dpm_pd_get_source_cap_ext(info->tcpc,
+				NULL, &cap_ext);
+			if (ret == TCPM_SUCCESS)
+				info->srccap.pdp = cap_ext.source_pdp;
+			else {
+				info->srccap.pdp = 0;
+				pr_err("[%s] tcpm_dpm_pd_get_source_cap_ext failed(%d)\n",
+					__func__, ret);
 			}
 
 			info->srccap.pwr_limit[idx] = apdo_cap.pwr_limit;
@@ -7993,9 +7941,6 @@ static void mtk_charger_shutdown(struct platform_device *dev)
 	}
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	if (oplus_is_pps_charging())
-		oplus_pps_shutdown();
-
 /* Add for shipmode stm6620 */
 	if (g_oplus_chip) {
 		enter_ship_mode_function(g_oplus_chip);

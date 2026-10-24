@@ -21,10 +21,9 @@
 #include <oplus_strategy.h>
 
 #define IRQ_EVNET_NUM				8
-
 #define BIDIRECT_IRQ_EVNET_NUM			12
 #define IRQ_EVNET_NUM_HL7138			16
-#define DEFAULT_CP_IBUS_DEVATION		1000
+#define DEFAULT_CP_IBUS_DEVATION		800
 #define MAX_IGNORE				6
 #define FIRST_FRAME				0xA8
 #define SVOOC_INIT_VBUS_VOL_LOW			5000
@@ -70,8 +69,6 @@
 #define ADAPTER_CHECK_VOOC_HEAD_TIMES	0x2
 #define ADAPTER_CHECK_CMD_DATA_TIMES	0x2
 #define FAST_CHARGER_MOS_DISABLE	0
-
-#define INT_EXCEPT_INFO_LEN		30
 
 enum {
 	VOOC_CHARGER_MODE,
@@ -175,12 +172,6 @@ struct irqinfo {
         int mask;
         char except_info[30];
         int mark_except;
-};
-
-struct intinfo {
-        int mask;
-        char except_info[INT_EXCEPT_INFO_LEN];
-        int level;
 };
 
 static struct irqinfo vooc_flag[IRQ_EVNET_NUM] = {
@@ -592,7 +583,7 @@ enum oplus_fastchg_copycat_type {
 	FAST_COPYCAT_OVER_VBAT_CURRENT,
 	FAST_COPYCAT_VOOC20_REPEAT_FASTCHG_ORNOT,
 	FAST_COPYCAT_VOOC20_REPEAT_IS_VBUS_OK,
-	FAST_COPYCAT_IS_VBUS_OK_EXCEED_MAXCNT,
+	FAST_COPYCAT_SVOOC_IS_VBUS_OK_EXCEED_MAXCNT,
 	FAST_COPYCAT_SVOOC_MISS_ASK_CUR_LEVEL,
 	FAST_COPYCAT_VOOC20_NON_EXPECT_CMD,
 	FAST_COPYCAT_TYPE_MAX,
@@ -611,8 +602,6 @@ struct oplus_voocphy_manager {
 
 	struct oplus_mms *plc_topic;
 	struct mms_subscribe *plc_subs;
-	struct oplus_mms *gauge_topic;
-	struct mms_subscribe *gauge_subs;
 
 	int irq_gpio;
 	int irq;
@@ -689,14 +678,6 @@ struct oplus_voocphy_manager {
 	unsigned int current_ap;
 	unsigned int current_bcc;
 	unsigned int current_batt_temp;
-	bool fcl_support;
-	bool allow_current_pcc_ctrl;
-	bool dchg;
-	bool fcl_trigger;
-	unsigned int current_pcc;
-	unsigned int current_fcl;
-	unsigned int pre_current_fcl;
-	unsigned int fcl_cnt;
 	unsigned char ap_need_change_current;
 	unsigned char adjust_curr;
 	unsigned char adjust_fail_cnt;
@@ -713,8 +694,6 @@ struct oplus_voocphy_manager {
 	unsigned int master_cp_ichg;
 	unsigned int cp_vbat;
 	unsigned int cp_vac;
-	int cp_tsbus;
-	int cp_tsbat;
 	unsigned int slave_cp_ichg;
 	unsigned int slave_cp_vbus;
 	unsigned int slave_cp_vsys;
@@ -810,7 +789,6 @@ struct oplus_voocphy_manager {
 	struct delayed_work clear_boost_work;
 	struct delayed_work voocphy_send_ongoing_notify;
 	struct delayed_work recovery_system_work;
-	struct delayed_work pcc_work;
 	struct work_struct first_ask_batvol_work;
 	atomic_t  voocphy_freq_state;
 	bool recovery_system_done;
@@ -834,7 +812,6 @@ struct oplus_voocphy_manager {
 	struct batt_sys_curves *batt_sys_curv_by_tmprange;
 	unsigned char cur_sys_curv_idx;
 	int sys_curve_temp_idx;
-	int temp_region_cnt;
 
 	struct vooc_monitor_event mornitor_evt[MONITOR_EVENT_NUM];
 
@@ -932,31 +909,15 @@ struct oplus_voocphy_manager {
 #if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
 	struct oplus_cfg debug_cfg;
 #endif
-	struct oplus_chg_strategy **svooc_lcf_strategy;
-	int lcf_num;
-
+	struct oplus_chg_strategy *svooc_lcf_strategy;
+	struct oplus_chg_strategy *svooc_sub_lcf_strategy;
 	bool fastchg_disable_charger;
 	bool v2x_volt_full_open_low;
 	int eis_status;
 	int eis_copycat_detect_cnt;
-	int eis_vbus;
 	bool cp_err_uploading;
-	int batt_alarm;
 
 	int plc_status;
-	bool ic_abnormal;
-	bool slave_ic_abnormal;
-	struct delayed_work clear_ic_abnormal_status_work;
-	struct oplus_chg_strategy *svooc_pcc_strategy;
-	bool svooc_pcc_strategy_v2;
-
-	bool vbus_adjust_new_method;
-	bool vbus_adjust_done;
-	bool in_vbus_adjust_trans;
-	u8 vbus_adjust_hold_cnt;
-	u8 last_vooc_vbus_status;
-	struct oplus_chg_strategy *ccd_strategy;
-	bool twice_request_current_enable;
 };
 
 struct oplus_voocphy_operations {
@@ -992,17 +953,13 @@ struct oplus_voocphy_operations {
 	int (*get_voocphy_enable)(struct oplus_voocphy_manager *chip, u8 *data);
 	void (*dump_voocphy_reg)(struct oplus_voocphy_manager *chip);
 	int (*get_chip_id)(struct oplus_voocphy_manager *chip);
-	int (*set_chg_pmid2out)(struct oplus_voocphy_manager *chip, bool enable, int reason);
-	bool (*get_chg_pmid2out)(struct oplus_voocphy_manager *chip);
+	int (*set_chg_pmid2out)(bool enable, int reason);
+	bool (*get_chg_pmid2out)(void);
 	int (*reset_voocphy_ovp)(struct oplus_voocphy_manager *chip);
 	bool (*check_cp_int_happened)(struct oplus_voocphy_manager *chip, bool *dump_reg, bool *send_info);
 	void (*dual_chan_buck_set_ucp)(struct oplus_voocphy_manager *chip, int ucp_value);
 	int (*upload_cp_error)(struct oplus_voocphy_manager *chip, int err_type);
 	int (*get_cp_error_type)(struct oplus_voocphy_manager *chip, int *err_type);
-	bool (*ic_is_abnormal)(struct oplus_voocphy_manager *chip);
-	int (*set_sstimeout_ucp_enable)(struct oplus_voocphy_manager *chip, bool enable);
-	int (*cp_set_vac2v2x_uvp)(struct oplus_voocphy_manager *chip, bool enable);
-	int (*set_usb_dischg_enable)(struct oplus_voocphy_manager *chip, bool enable);
 };
 
 #define VOOCPHY_LOG_BUF_LEN 1024
@@ -1022,7 +979,6 @@ struct voocphy_log_buf {
 };
 
 bool oplus_voocphy_chip_is_null(void);
-bool oplus_voocphy_slave_chip_is_null(void);
 void oplus_voocphy_slave_init(struct oplus_voocphy_manager *chip);
 void oplus_voocphy_get_chip(struct oplus_voocphy_manager **chip);
 int oplus_register_voocphy(struct oplus_voocphy_manager *chip);

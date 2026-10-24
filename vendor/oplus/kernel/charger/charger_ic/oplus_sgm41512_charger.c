@@ -44,8 +44,13 @@
 #include "../voocphy/oplus_voocphy.h"
 #include <linux/rtc.h>
 #include <linux/iio/consumer.h>
-#include <tcpm.h>
+#ifdef CONFIG_OPLUS_PD_EXT_SUPPORT
+#include "../pd_ext/inc/tcpci.h"
+#include "../pd_ext/inc/tcpm.h"
+#else
 #include <tcpci.h>
+#include <tcpm.h>
+#endif
 #endif
 #define CHARGER_NORMAL_TEMP_HIGH 370
 #define CHARGER_NORMAL_TEMP_HIGH_MINUS 350
@@ -2253,7 +2258,6 @@ static void do_sgm41512_threaded_irq_work(struct work_struct *data)
 			oplus_chg_wake_update_work();
 		}
 
-		cancel_delayed_work_sync(&charger_modefy_work);
 		sgm41512_enable_chg_type_det(chip->pwr_gd);
 		if (chip->enable_headset_plugin_limit) {
 			if (chip->pwr_gd) {

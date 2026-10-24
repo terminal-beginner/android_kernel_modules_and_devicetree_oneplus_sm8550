@@ -283,7 +283,6 @@ enum oplus_chg_track_info_flag {
 	TRACK_NOTIFY_FLAG_WLS_TRX_INFO,
 	TRACK_NOTIFY_FLAG_PARALLELCHG_FOLDMODE_INFO,
 	TRACK_NOTIFY_FLAG_MMI_CHG_INFO,
-	TRACK_NOTIFY_FLAG_PLC_CHG_INFO,
 	TRACK_NOTIFY_FLAG_SLOW_CHG_INFO,
 	TRACK_NOTIFY_FLAG_CHG_CYCLE_INFO,
 	TRACK_NOTIFY_FLAG_TTF_INFO,
@@ -430,7 +429,7 @@ typedef struct {
 
 
 int oplus_chg_track_handle_adsp_info(u8 *crux_info, int len);
-int oplus_chg_track_upload_trigger_data(oplus_chg_track_trigger *data);
+int oplus_chg_track_upload_trigger_data(oplus_chg_track_trigger data);
 int oplus_chg_track_comm_monitor(void);
 int oplus_chg_track_check_wired_charging_break(int vbus_rising);
 int oplus_chg_track_parallel_mos_error(int reason);
@@ -468,6 +467,5 @@ int oplus_track_upload_ntc_abnormal_info(int ntc_temp, char *ntc_name,
 						   char *scene, char *reason, char *other);
 int oplus_chg_track_upload_rechg_info(void);
 int oplus_chg_track_set_fcl_info(int type, int batt_volt, int batt_curr, int batt_temp);
-int oplus_chg_track_set_fcl_batt_r(int batt_r);
 
 #endif

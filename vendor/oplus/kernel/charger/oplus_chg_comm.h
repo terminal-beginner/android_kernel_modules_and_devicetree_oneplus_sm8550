@@ -79,10 +79,8 @@ struct oplus_chg_cmd {
 
 enum oplus_chg_cmd_type {
 	CMD_WLS_THIRD_PART_AUTH,
-	CMD_GAUGE_CALIB_OBTAIN,
-	CMD_GAUGE_CALIB_UPDATE,
-	CMD_DEC_CV_DOWN_OBTAIN,
-	CMD_DEC_CV_DOWN_UPDATE,
+	CMD_UPDATE_UI_SOH,
+	CMD_INIT_UI_SOH,
 };
 
 enum oplus_chg_cmd_error {

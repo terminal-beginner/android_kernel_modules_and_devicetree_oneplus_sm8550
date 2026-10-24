@@ -1747,7 +1747,7 @@ static ssize_t mtk_chg_set_cv_write(struct file *file,
 static const struct proc_ops mtk_chg_set_cv_fops = {
 	.proc_open = mtk_chg_set_cv_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_set_cv_write,
 };
@@ -1811,7 +1811,7 @@ static ssize_t mtk_chg_current_cmd_write(struct file *file,
 static const struct proc_ops mtk_chg_current_cmd_fops = {
 	.proc_open = mtk_chg_current_cmd_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_current_cmd_write,
 };
@@ -1865,7 +1865,7 @@ static ssize_t mtk_chg_en_power_path_write(struct file *file,
 static const struct proc_ops mtk_chg_en_power_path_fops = {
 	.proc_open = mtk_chg_en_power_path_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_en_power_path_write,
 };
@@ -1929,7 +1929,7 @@ static ssize_t mtk_chg_en_safety_timer_write(struct file *file,
 static const struct proc_ops mtk_chg_en_safety_timer_fops = {
 	.proc_open = mtk_chg_en_safety_timer_open,
 	.proc_read = seq_read,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 	.proc_release = single_release,
 	.proc_write = mtk_chg_en_safety_timer_write,
 };
@@ -6568,16 +6568,12 @@ int oplus_chg_set_pd_config(void)
 		ret = tcpm_dpm_pd_request(tcpc, 9000, 2000, NULL);
 		if (ret != TCPM_SUCCESS) {
 			printk(KERN_ERR "%s: tcpm_dpm_pd_request fail\n", __func__);
-			msleep(300);
-			oplus_chg_unsuspend_charger();
 			return -EINVAL;
 		}
 
 		ret = tcpm_inquire_pd_contract(tcpc, &vbus_mv_t, &ibus_ma_t);
 		if (ret != TCPM_SUCCESS) {
 			printk(KERN_ERR "%s: inquire current vbus_mv and ibus_ma fail\n", __func__);
-			msleep(300);
-			oplus_chg_unsuspend_charger();
 			return -EINVAL;
 		}
 
@@ -6599,16 +6595,12 @@ int oplus_chg_set_pd_config(void)
 			ret = tcpm_dpm_pd_request(tcpc, 5000, 2000, NULL);
 			if (ret != TCPM_SUCCESS) {
 				printk(KERN_ERR "%s: tcpm_dpm_pd_request fail\n", __func__);
-				msleep(300);
-				oplus_chg_unsuspend_charger();
 				return -EINVAL;
 			}
 
 			ret = tcpm_inquire_pd_contract(tcpc, &vbus_mv_t, &ibus_ma_t);
 			if (ret != TCPM_SUCCESS) {
 				printk(KERN_ERR "%s: inquire current vbus_mv and ibus_ma fail\n", __func__);
-				msleep(300);
-				oplus_chg_unsuspend_charger();
 				return -EINVAL;
 			}
 

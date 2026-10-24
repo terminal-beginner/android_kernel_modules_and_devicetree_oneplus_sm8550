@@ -114,8 +114,7 @@
 #define PPS_ACTION_START_DIFF_VOLT_V2 600
 #define PPS_ACTION_START_DIFF_VOLT_3RD 450
 #define PPS_ACTION_VOLT_CHANGE_DIFF_VOLT_3RD 100
-#define PPS_ACTION_CURR_MIN_OPLUS 800
-#define PPS_ACTION_CURR_MIN_THIRD 1000
+#define PPS_ACTION_CURR_MIN 800
 
 #define PPS_ACTION_START_DELAY 300
 #define PPS_ACTION_MOS_DELAY 50
@@ -529,7 +528,7 @@ struct pps_current_limits {
 	int cp_r_down;
 	int cp_tdie_down;
 	int current_slow_chg;
-	int current_fcl;
+	int full_1time_limit;
 };
 
 struct oplus_pps_limits {
@@ -711,7 +710,6 @@ struct oplus_pps_chip {
 	struct delayed_work pps_err_load_trigger_work;
 	struct pd_adapter_info adapter_info;
 	char pd_event_name[PD_EVENT_NAME_LEN];
-	int target_vbus_mv;
 };
 
 struct oplus_pps_operations {
@@ -850,5 +848,4 @@ bool oplus_pps_get_adapter_voltage_status(void);
 int oplus_chg_track_pack_pps_adapter_info(u8 *pps_adapter_info, int lenth);
 bool oplus_support_pps(void);
 void oplus_pps_shutdown(void);
-int oplus_pps_get_adapter_power(void);
 #endif /*_OPLUS_PPS_H_*/

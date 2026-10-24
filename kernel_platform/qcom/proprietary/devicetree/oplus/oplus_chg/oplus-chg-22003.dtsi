@@ -214,9 +214,6 @@
 		track,voocphy_type = <3>;
 		track,wired_max_power = <67000>;
 		track,wired_fast_chg_scheme = <3>;
-
-		track,gauge_status_ctrl;
-		track,external_gauge_num = <2>;
 	};
 
 	oplus_battery_log: oplus,battery_log {
@@ -367,11 +364,6 @@
 		reg = <0x55>;
 		qcom,modify-soc-smooth;
 		oplus,capacity-pct = <69>;
-
-		zy,gauge-check-model;
-		battery_params {
-			sino_default_cell_model = /bits/ 16 <60 59 55 60 67 47 54 51 52 62 71 67 110 496 5612>;
-		};
 	};
 
 	sc8547-charger-slave@6F{
@@ -430,11 +422,6 @@
 		qcom,modify-soc-smooth;
 		qcom,gauge_num = <1>;
 		oplus,capacity-pct = <31>;
-
-		zy,gauge-check-model;
-		battery_params {
-			sino_default_cell_model = /bits/ 16 <122 116 113 129 180 117 130 117 119 138 169 222 293 636 4967>;
-		};
 	};
 };
 
@@ -460,9 +447,6 @@
 	qcom,smart_charging_screenoff;
 	qcom,support_3p6_standard;
 	qcom,voocphy_support = <3>;
-	oplus,full_limit_curr_support;
-	oplus,fcl_index = <0>;
-	oplus,vb_offset = <40>;
 	qcom,input_current_charger_ma = <2000>;
 	qcom,pd_input_current_charger_ma = <2000>;
 	qcom,qc_input_current_charger_ma = <2000>;
@@ -500,7 +484,6 @@
 	qcom,iterm_ma = <170>;
 	qcom,sub_iterm_ma = <84>;
 	qcom,recharge-mv = <100>;
-	oplus,batt_full_time = <60>;
 	qcom,batt_capacity_mah = <4805>;/*typical capacity*/
 
 	qcom,removed_bat_decidegc = <190>;  /*<-19C*/
@@ -674,7 +657,7 @@
 	qcom,chg_ctrl_by_camera;
 	qcom,sw_vfloat_over_protect_enable;
 	qcom,usbtemp_batttemp_gap = <12>;
-	oplus_spec,dec-vol-fv-mv = <40>;
+	oplus,aging_ffc_version = <1>;
 	oplus,adsp_chg_use_ap_gauge;
 
 	//for PD9V or QC9V

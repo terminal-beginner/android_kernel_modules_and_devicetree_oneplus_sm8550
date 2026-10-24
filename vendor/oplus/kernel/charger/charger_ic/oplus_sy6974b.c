@@ -53,13 +53,6 @@ extern int oplus_check_pd_usb_type(void);
 extern int oplus_chg_get_pd_type(void);
 extern int oplus_chg_pd_setup(void);
 extern int oplus_chg_get_charger_subtype(void);
-int sy6974b_input_current_limit_without_aicl(int current_ma);
-int sy6974b_set_vindpm_vol(int vol);
-int sy6974b_get_vbus_stat(void);
-
-#define SY6974B_PD_AICR_MAX_3000MA 3000
-#define SY6974B_PD_SUSPEND_100MA 100
-#define PORT_PD_WITH_USB 2
 
 struct chip_sy6974b {
 	struct device		*dev;
@@ -94,7 +87,6 @@ struct chip_sy6974b {
 	int			normal_init_delay_ms;
 	int			other_init_delay_ms;
 	int			charger_current_pre;
-	int			pd_curr_max;
 
 	struct wakeup_source *suspend_ws;
 	/*fix chgtype identify error*/
@@ -369,7 +361,7 @@ int oplus_sy6974b_enter_shipmode(bool en)
 
 
 int sy6974b_usb_icl[] = {
-	100, 500, 900, 1200, 1350, 1500, 1750, 2000, 2200, 2500, 2750, 3000,
+	300, 500, 900, 1200, 1350, 1500, 1750, 2000, 2500, 3000,
 };
 
 static int sy6974b_get_usb_icl(void)
@@ -394,20 +386,6 @@ static int sy6974b_get_usb_icl(void)
 	return (tmp * REG00_SY6974B_INPUT_CURRENT_LIMIT_STEP + REG00_SY6974B_INPUT_CURRENT_LIMIT_OFFSET);
 }
 
-static int __maybe_unused sy6974b_pd_set_aicr(int current_ma, bool en)
-{
-	struct chip_sy6974b *chip = charger_ic;
-
-	if (!chip)
-		return 0;
-
-	chip->pd_curr_max = current_ma;
-	if (en)
-		return sy6974b_input_current_limit_without_aicl(chip->pd_curr_max);
-	else
-		return 0;
-}
-
 int sy6974b_input_current_limit_without_aicl(int current_ma)
 {
 	int rc = 0;
@@ -422,6 +400,8 @@ int sy6974b_input_current_limit_without_aicl(int current_ma)
 		return 0;
 	}
 
+	chg_err("tmp current [%d]ma\n", current_ma);
+
 	if (current_ma > REG00_SY6974B_INPUT_CURRENT_LIMIT_MAX)
 		current_ma = REG00_SY6974B_INPUT_CURRENT_LIMIT_MAX;
 
@@ -429,13 +409,6 @@ int sy6974b_input_current_limit_without_aicl(int current_ma)
 		current_ma = REG00_SY6974B_INPUT_CURRENT_LIMIT_OFFSET;
 
 	tmp = (current_ma - REG00_SY6974B_INPUT_CURRENT_LIMIT_OFFSET) / REG00_SY6974B_INPUT_CURRENT_LIMIT_STEP;
-
-	if (chip->pd_curr_max <= 100)
-		sy6974b_set_vindpm_vol(5400);
-	else
-		sy6974b_set_vindpm_vol(chip->hw_aicl_point);
-
-	chg_err("tmp [%02x]\n", tmp << REG00_SY6974B_INPUT_CURRENT_LIMIT_SHIFT);
 
 	rc = sy6974b_config_interface(chip, REG00_SY6974B_ADDRESS,
 					tmp << REG00_SY6974B_INPUT_CURRENT_LIMIT_SHIFT,
@@ -522,7 +495,7 @@ int sy6974b_get_ibus_current(void)
 #define AICL_DELAY_MIN_US	90000
 #define AICL_DELAY_MAX_US	91000
 #define SUSPEND_IBUS_MA		100
-#define DEFAULT_IBUS_MA		100
+#define DEFAULT_IBUS_MA		500
 int sy6974b_input_current_limit_write(int current_ma)
 {
 	int i = 0, rc = 0;
@@ -530,7 +503,6 @@ int sy6974b_input_current_limit_write(int current_ma)
 	int sw_aicl_point = 0;
 	struct chip_sy6974b *chip = charger_ic;
 	int pre_icl_index = 0, pre_icl = 0;
-	int vbus_stat = 0;
 
 	if (!chip)
 		return 0;
@@ -544,21 +516,12 @@ int sy6974b_input_current_limit_write(int current_ma)
 		return 0;
 	}
 
-	current_ma = min(current_ma, chip->pd_curr_max);
 	if (chip->charger_current_pre == current_ma) {
 		pr_info("charger_current_pre = %d.\n", current_ma);
 		return 0;
 	} else {
 		chip->charger_current_pre = current_ma;
 	}
-
-	if (current_ma <= 0) {
-		sy6974b_input_current_limit_without_aicl(0);
-		return 0;
-	}
-
-	vbus_stat = sy6974b_get_vbus_stat();
-	chg_err("[%s] sy6974b_get_vbus_stat=0x%x, current_ma=%d\n", __func__, vbus_stat, current_ma);
 
 	/*first: icl down to 500mA, step from pre icl*/
 	pre_icl = sy6974b_get_usb_icl();
@@ -657,47 +620,27 @@ int sy6974b_input_current_limit_write(int current_ma)
 	if (chg_vol < sw_aicl_point) {
 		i = i - 2; //1.5
 		goto aicl_pre_step;
-	} else if (current_ma < 2200 || vbus_stat == REG08_SY6974B_VBUS_STAT_FLOAT) {
-		goto aicl_end;
-	}
-
-	i = 8; /* 2200 */
-	rc = sy6974b_input_current_limit_without_aicl(sy6974b_usb_icl[i]);
-	usleep_range(AICL_DELAY_MIN_US, AICL_DELAY_MAX_US);
-	chg_vol = sy6974b_get_charger_vol();
-	if (chg_vol < sw_aicl_point) {
-		i = i -2;
-		goto aicl_pre_step;
 	} else if (current_ma < 2500) {
 		goto aicl_end;
 	}
 
-	i = 9; /* 2500 */
+	i = 8; /* 2500 */
 	rc = sy6974b_input_current_limit_without_aicl(sy6974b_usb_icl[i]);
 	usleep_range(AICL_DELAY_MIN_US, AICL_DELAY_MAX_US);
 	chg_vol = sy6974b_get_charger_vol();
 	if (chg_vol < sw_aicl_point) {
-		i = i - 2; /*2.0*/
-		goto aicl_pre_step;
-	} else if (current_ma < 2750) {
-		goto aicl_end;
-	}
-	i = 10; /* 2750 */
-	rc = sy6974b_input_current_limit_without_aicl(sy6974b_usb_icl[i]);
-	usleep_range(AICL_DELAY_MIN_US, AICL_DELAY_MAX_US);
-	chg_vol = sy6974b_get_charger_vol();
-	if (chg_vol < sw_aicl_point) {
-		i = i - 2; /*2.2*/
+		i = i - 1; //2
 		goto aicl_pre_step;
 	} else if (current_ma < 3000) {
 		goto aicl_end;
 	}
-	i = 11; /* 3000 */
+
+	i = 9; /* 3000 */
 	rc = sy6974b_input_current_limit_without_aicl(sy6974b_usb_icl[i]);
 	usleep_range(AICL_DELAY_MIN_US, AICL_DELAY_MAX_US);
 	chg_vol = sy6974b_get_charger_vol();
 	if (chg_vol < sw_aicl_point) {
-		i = i - 2;/*2.5*/
+		i = i -1;
 		goto aicl_pre_step;
 	} else if (current_ma >= 3000) {
 		goto aicl_end;
@@ -1314,7 +1257,6 @@ int sy6974b_disable_charging(void)
 		return 0;
 	}
 
-	chip->charger_current_pre = -1;
 	if (!g_oplus_chip || !g_oplus_chip->otg_online)
 		sy6974b_otg_disable();
 	rc = sy6974b_config_interface(chip, REG01_SY6974B_ADDRESS,
@@ -2273,7 +2215,6 @@ static int sy6974b_inform_charger_type(struct chip_sy6974b *chip)
 	}
 
 	power_supply_changed(chip->psy);
-	oplus_chg_wake_update_work();
 	return ret;
 }
 
@@ -2834,7 +2775,6 @@ static void sy6974b_get_bc12(struct chip_sy6974b *chip)
 		return;
 
 	if (!chip->bc12_done) {
-		sy6974b_input_current_limit_without_aicl(DEFAULT_IBUS_MA);
 		vbus_stat = sy6974b_get_vbus_stat();
 		switch (vbus_stat) {
 		case REG08_SY6974B_VBUS_STAT_SDP:
@@ -3065,15 +3005,6 @@ static irqreturn_t sy6974b_irq_handler(int irq, void *data)
 			Charger_Detect_Init();
 		}
 #endif
-		ret = sy6974b_input_current_limit_without_aicl(sy6974b_usb_icl[0]);
-		if (ret){
-			chg_info("FAIL:sy6974b_input_current_limit_without_aicl\n");
-		}
-		chip->charger_current_pre = sy6974b_usb_icl[0];
-		ret = sy6974b_set_vindpm_vol(chip->hw_aicl_point);
-		if (ret){
-			chg_info("FAIL:sy6974b_set_vindpm_vol\n");
-		}
 		if (chip->oplus_charger_type == POWER_SUPPLY_TYPE_UNKNOWN) {
 			sy6974b_get_bc12(chip);
 		}
@@ -3086,15 +3017,6 @@ static irqreturn_t sy6974b_irq_handler(int irq, void *data)
 						&& oplus_vooc_get_allow_reading()
 						&& !oplus_is_rf_ftm_mode()) {
 					sy6974b_enable_charging();
-			                ret = sy6974b_input_current_limit_without_aicl(sy6974b_usb_icl[0]);
-					if (ret){
-						chg_info("FAIL:sy6974b_input_current_limit_without_aicl\n");
-					}
-					chip->charger_current_pre = sy6974b_usb_icl[0];
-					ret = sy6974b_set_vindpm_vol(chip->hw_aicl_point);
-					if (ret){
-						chg_info("FAIL:sy6974b_set_vindpm_vol\n");
-					}
 				}
 			}
 		}
@@ -3110,7 +3032,6 @@ static irqreturn_t sy6974b_irq_handler(int irq, void *data)
 		chip->oplus_charger_type = POWER_SUPPLY_TYPE_UNKNOWN;
 		chip->charger_current_pre = -1;
 		oplus_chg_track_check_wired_charging_break(0);
-		sy6974b_input_current_limit_write(DEFAULT_IBUS_MA);
 		#ifdef CONFIG_OPLUS_CHARGER_MTK
 		sy6974b_inform_charger_type(chip);
 		#else
@@ -3379,34 +3300,17 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 	struct chip_sy6974b * chip =
 		(struct chip_sy6974b *)container_of(nb,
 		struct chip_sy6974b, pd_nb);
-	int sink_mv;
-	int sink_ma;
-	struct oplus_chg_chip *chg_chip = oplus_chg_get_chg_struct();
-
-	if (chip == NULL || chg_chip == NULL)
-		return NOTIFY_BAD;
 
 	switch (event) {
 	case TCP_NOTIFY_TYPEC_STATE:
 		if (noti->typec_state.old_state == TYPEC_UNATTACHED &&
-				(noti->typec_state.new_state == TYPEC_ATTACHED_SNK ||
-				noti->typec_state.new_state == TYPEC_ATTACHED_NORP_SRC ||
-				noti->typec_state.new_state == TYPEC_ATTACHED_CUSTOM_SRC ||
-				noti->typec_state.new_state == TYPEC_ATTACHED_DBGACC_SNK)) {
-			sy6974b_pd_set_aicr(SY6974B_PD_AICR_MAX_3000MA, false);
-			sy6974b_inform_charger_type(chip);
-			if (!chg_chip->authenticate || chg_chip->balancing_bat_stop_chg)
-				sy6974b_disable_charging();
+		    noti->typec_state.new_state == TYPEC_ATTACHED_SNK) {
 			chg_debug("USB Plug in\n");
-			power_supply_changed(chip->psy);
-		} else if ((noti->typec_state.old_state == TYPEC_ATTACHED_SNK ||
-				noti->typec_state.old_state == TYPEC_ATTACHED_NORP_SRC ||
-				noti->typec_state.old_state == TYPEC_ATTACHED_CUSTOM_SRC ||
-				noti->typec_state.old_state == TYPEC_ATTACHED_DBGACC_SNK) &&
-				noti->typec_state.new_state == TYPEC_UNATTACHED) {
-			sy6974b_pd_set_aicr(SY6974B_PD_AICR_MAX_3000MA, false);
-			chg_debug("USB Plug out\n");
+			power_supply_changed( chip->psy);
+		} else if (noti->typec_state.old_state == TYPEC_ATTACHED_SNK
+			&& noti->typec_state.new_state == TYPEC_UNATTACHED) {
 			sy6974b_unsuspend_charger();
+			chg_debug("USB Plug out\n");
 			if (oplus_vooc_get_fast_chg_type() == CHARGER_SUBTYPE_FASTCHG_VOOC && oplus_chg_get_wait_for_ffc_flag() != true) {
 				chip->power_good = 0;
 				chip->bc12_done = false;
@@ -3424,16 +3328,6 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 				oplus_chg_wakelock(chip, false);
 				chg_debug("usb real remove vooc fastchg clear flag!\n");
 			}
-		}
-		break;
-	case TCP_NOTIFY_SINK_VBUS:
-		sink_mv = noti->vbus_state.mv;
-		sink_ma = noti->vbus_state.ma;
-		pr_info("%s: sink vbus %dmV %dmA type(0x%02x) adapter\n", __func__,
-				sink_mv, sink_ma, noti->vbus_state.type);
-		if (noti->vbus_state.type & TCP_VBUS_CTRL_PD_DETECT) {
-			sy6974b_pd_set_aicr(sink_ma, true);
-			pr_err("set sy6974b pd aicr %d\n", sink_ma);
 		}
 		break;
 	default:
@@ -3476,7 +3370,6 @@ static int sy6974b_charger_probe(struct i2c_client *client,
 	chip->bc12_retried = 0;
 	chip->bc12_delay_cnt = 0;
 	chip->charger_current_pre = -1;
-	chip->pd_curr_max = SY6974B_PD_AICR_MAX_3000MA;
 	chip->chg_consumer =
 		charger_manager_get_by_name(&client->dev, "sy6974b");
 

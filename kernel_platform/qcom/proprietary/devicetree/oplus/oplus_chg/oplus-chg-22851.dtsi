@@ -269,7 +269,6 @@
 	qcom,recharge-mv = <100>;
 	qcom,batt_capacity_mah = <5000>;/*typical capacity*/
 	//qcom,batt_capacity_mah = <4870>; /*rated capacity*/
-	oplus,batt_full_time = <60>;
 
 	qcom,removed_bat_decidegc = <390>;  /*<-39C*/
 
@@ -461,7 +460,6 @@
 	qcom,smart_chg_bcc_support;
 	//for smart charge end
 	qcom,smart_chg_soh_support;
-	oplus_spec,dec-vol-fv-mv = <40>;
 	oplus,quick_mode_gain_support;
 	qcom,vooc_show_ui_soc_decimal;
 	qcom,ui_soc_decimal_speedmin = <20>;//2A
@@ -817,6 +815,7 @@
 		qcom,charging_switch1-gpio = <&pm8550b_gpios 8 0x00>;
 
 		qcom,external_gauge_support;
+		oplus,full_limit_curr_support;
 		qcom,voocphy_bidirect_cp_support;
 		qcom,voocphy_current_default = <91>;
 		qcom,copycat_vooc_support;

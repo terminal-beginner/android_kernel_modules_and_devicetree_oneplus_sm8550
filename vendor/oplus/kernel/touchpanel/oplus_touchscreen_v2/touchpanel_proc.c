@@ -4238,13 +4238,12 @@ static ssize_t proc_force_water_mode_read(struct file *file, char __user *buffer
 	char page[PAGESIZE] = {0};
 	struct touchpanel_data *ts = PDE_DATA(file_inode(file));
 
-	if (!ts || !ts->chip_data || !ts->ts_ops) {
+	if (!ts) {
 		snprintf(page, PAGESIZE - 1, "%d\n", -1); /*no support*/
 
 	} else {
 		/*support*/
-		if (ts->ts_ops->get_water_mode)
-			ts->ts_ops->get_water_mode(ts->chip_data);
+		ts->ts_ops->get_water_mode(ts->chip_data);
 		TP_INFO(ts->tp_index, "%s:  water_mode 0x%x", __func__, ts->water_mode);
 		snprintf(page, PAGESIZE - 1, "%d\n", ts->water_mode);
 	}
@@ -5082,7 +5081,7 @@ int init_touchpanel_proc(struct touchpanel_data *ts)
 			ts->glove_mode_v2_support
 		},
 		{
-			"pocket_prevent_mode", 0666, NULL, &proc_pocket_prevent_mode, ts, false, ts->glove_mode_v2_support
+			"pocket_prevent_mode", 0666, NULL, &proc_pocket_prevent_mode, ts, false, true
 		},
 		{
 			"leather_cover_enable", 0666, NULL, &leather_cover_enable, ts, false,

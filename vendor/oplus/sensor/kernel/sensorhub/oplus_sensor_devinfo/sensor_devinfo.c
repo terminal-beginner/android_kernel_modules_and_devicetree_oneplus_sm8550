@@ -102,10 +102,6 @@ static struct panel_node g_panel_node[PANEL_NUM] = {
 	},
 	/* add from here */
 	{
-		.id = TD4160,
-		.lcm_name = "td4160",
-	},
-	{
 		.id = TD4377,
 		.lcm_name = "td4377",
 	},
@@ -132,18 +128,6 @@ static struct panel_node g_panel_node[PANEL_NUM] = {
 	{
 		.id = DJN,
 		.lcm_name = "djn",
-	},
-	{
-		.id = CSOT_TD4376B,
-		.lcm_name = "csot_td4376b",
-	},
-	{
-		.id = P_D,
-		.lcm_name = "P_D",
-	},
-	{
-		.id = P_4,
-		.lcm_name = "P_4",
 	},
 	{
 		.id = PANEL_NUM,

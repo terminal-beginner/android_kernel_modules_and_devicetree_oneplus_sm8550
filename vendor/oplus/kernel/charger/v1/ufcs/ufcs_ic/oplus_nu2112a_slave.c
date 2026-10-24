@@ -544,11 +544,7 @@ static DEVICE_ATTR(registers, 0660, nu2112a_slave_show_registers, nu2112a_slave_
 
 static void nu2112a_slave_create_device_node(struct device *dev)
 {
-	int ret = 0;
-	ret = device_create_file(dev, &dev_attr_registers);
-
-	if (ret != 0)
-		chg_err("create device node failed, ret = %d.", ret);
+	device_create_file(dev, &dev_attr_registers);
 }
 
 static struct of_device_id nu2112a_slave_charger_match_table[] = {

@@ -220,9 +220,6 @@
 #define WLS_FASTCHG_CURR_DISCHG_MAX_MA	1000
 #define WLS_FASTCHG_IOUT_CURR_MIN_MA	450
 
-#define WLS_BPP_PWR_MAX_MW		5000
-#define WLS_EPP_PWR_MAX_MW		10000
-#define WLS_EPP_PLUS_PWR_MAX_MW		15000
 #define WLS_VOOC_PWR_MAX_MW		15000
 
 #define WLS_MAX_STEP_CHG_ENTRIES	9
@@ -231,8 +228,9 @@
 
 #define WLS_SKIN_TEMP_MAX		500
 
-#define WLS_SOC_NUM_MAX_OLD_VER		3
-#define WLS_SOC_NUM_MAX			6
+#define WLS_BCC_STOP_CURR_NUM		5
+
+#define WLS_SOC_NUM_MAX			3
 
 #define CHARGE_FULL_FAN_THREOD_LO	350
 #define CHARGE_FULL_FAN_THREOD_HI	380
@@ -248,7 +246,6 @@
 #define WLS_ADAPTER_MODEL_15		0x0F
 #define WLS_ADAPTER_MODEL_25		0x19
 #define WLS_ADAPTER_THIRD_PARTY		0x1F
-#define WLS_ADAPTER_MODEL_MAX		16
 
 #define WLS_AUTH_AES_RANDOM_LEN		16
 #define WLS_AUTH_RANDOM_LEN		8
@@ -262,7 +259,6 @@
 
 #define WLS_COOL_DOWN_LEVEL_MAX		32
 #define WLS_BASE_NUM_MAX		32
-#define WLS_THIRD_PART_TX_CONFIG_NUM_MAX	10
 
 #define WLS_QUIET_MODE_UNKOWN		-1
 #define WLS_FASTCHG_MODE		0
@@ -275,9 +271,29 @@
 #define WLS_CALL_MODE			598
 #define WLS_EXIT_CALL_MODE		599
 
-#define FAN_PWM_PULSE_IN_SILENT_MODE_THR		60
+#define FAN_PWM_PULSE_IN_SILENT_MODE			60
+#define FAN_PWM_PULSE_IN_SILENT_MODE_DEFAULT		52
+#define FAN_PWM_PULSE_IN_SILENT_MODE_V01		FAN_PWM_PULSE_IN_SILENT_MODE
+#define FAN_PWM_PULSE_IN_SILENT_MODE_V02		FAN_PWM_PULSE_IN_SILENT_MODE_DEFAULT
+#define FAN_PWM_PULSE_IN_SILENT_MODE_V03_07		FAN_PWM_PULSE_IN_SILENT_MODE_DEFAULT
+#define FAN_PWM_PULSE_IN_SILENT_MODE_V08_15		40
 
-#define ADAPTER_CURVE_GEAR_MAX		6
+#define FAN_PWM_PULSE_IN_FASTCHG_MODE			93
+#define FAN_PWM_PULSE_IN_FASTCHG_MODE_DEFAULT		80
+#define FAN_PWM_PULSE_IN_FASTCHG_MODE_V01		FAN_PWM_PULSE_IN_FASTCHG_MODE
+#define FAN_PWM_PULSE_IN_FASTCHG_MODE_V02		FAN_PWM_PULSE_IN_FASTCHG_MODE_DEFAULT
+#define FAN_PWM_PULSE_IN_FASTCHG_MODE_V03_07		FAN_PWM_PULSE_IN_FASTCHG_MODE_DEFAULT
+#define FAN_PWM_PULSE_IN_FASTCHG_MODE_V08_15		70
+
+#define FAN_PWM_PULSE_IN_SILENT_MODE_THR		(FAN_PWM_PULSE_IN_FASTCHG_MODE_V08_15 - 1)
+#define FAN_PWM_PULSE_IN_FASTCHG_EXIT_MODE_01			93
+#define FAN_PWM_PULSE_IN_FASTCHG_EXIT_MODE_02			80
+#define FAN_PWM_PULSE_IN_FASTCHG_EXIT_MODE_03			80
+#define FAN_PWM_PULSE_IN_FASTCHG_EXIT_MODE_V04_07		91
+#define FAN_PWM_PULSE_IN_FASTCHG_EXIT_MODE_V08_15		70
+#define FAN_PWM_PULSE_IN_FASTCHG_EXIT_MODE_DEFAULT		80
+
+#define ADAPTER_CURVE_GEAR_MAX		5
 #define WLS_NON_FFC_FLOAT_VOL		100
 #define MAGCVR_STATUS_FAR		0
 #define MAGCVR_STATUS_NEAR		1
@@ -292,12 +308,6 @@
 #define RX_MODE_BPP_COUNT				120
 
 #define EVENT_ACTION_FOR_CAMERA				0x01
-#define WLS_FASTCHG_ENTER_TIMEOUT			40
-
-#define WLSPEN_CHG_STOP_WATER		0xF1
-#define WLSPEN_CHG_STOP_HIGHTEMP	0xF2
-#define WLSPEN_CHG_STOP_LOWTEMP		0xF3
-#define WLSPEN_CHG_STOP_FULL		0x64
 
 enum CAMERA_CALL_PARA {
 	CAMERA_CALL_OFF = 0,
@@ -316,29 +326,16 @@ static const char * const wls_err_scene_text[] = {
 	[WLS_ERR_SCENE_UPDATE] = "wls_update_err",
 };
 
-enum wls_chg_mode {
-	RX_MODE,
-	TX_MODE,
-	WLSPEN_MODE,
-};
-
-static const char* const wls_chg_mode_text[] = {
-	[RX_MODE] = "rx_mode",
-	[TX_MODE] = "trx_mode",
-	[WLSPEN_MODE] = "wlspen_mode",
-};
-
 enum oplus_chg_temp_region {
-	BATT_TEMP_COLD = 0,		/*< -10*/
-	BATT_TEMP_LITTLE_COLD,		/*-10-0*/
-	BATT_TEMP_COOL,			/*0-5*/
-	BATT_TEMP_LITTLE_COOL,		/*5-12*/
-	BATT_TEMP_PRE_NORMAL,		/*12-16*/
-	BATT_TEMP_NORMAL,		/*16-21*/
-	BATT_TEMP_NORMAL_HIGH,		/*21-37.5*/
-	BATT_TEMP_LITTLE_WARM,		/*37.5-44*/
-	BATT_TEMP_WARM,			/*44-53*/
-	BATT_TEMP_HOT,			/*>53*/
+	BATT_TEMP_COLD = 0,	/*< -10*/
+	BATT_TEMP_LITTLE_COLD,	/*-10-0*/
+	BATT_TEMP_COOL,		/*0-5*/
+	BATT_TEMP_LITTLE_COOL,	/*5-12*/
+	BATT_TEMP_PRE_NORMAL,	/*12-16*/
+	BATT_TEMP_NORMAL,	/*16-37.5*/
+	BATT_TEMP_LITTLE_WARM,	/*37.5-44*/
+	BATT_TEMP_WARM,		/*44-53*/
+	BATT_TEMP_HOT,		/*>53*/
 	BATT_TEMP_MAX,
 };
 
@@ -448,19 +445,15 @@ enum {
 	WLS_FAST_TEMP_0_TO_50,
 	WLS_FAST_TEMP_50_TO_120,
 	WLS_FAST_TEMP_120_TO_160,
-	WLS_FAST_TEMP_160_TO_400, /*16 ~ 21*/
-	WLS_FAST_TEMP_160_TO_400_HIGH, /*21 ~ 35*/
-	WLS_FAST_TEMP_400_TO_440, /*35 ~ 44*/
+	WLS_FAST_TEMP_160_TO_400,
+	WLS_FAST_TEMP_400_TO_440,
 	WLS_FAST_TEMP_MAX,
 };
 
 enum {
-	WLS_FAST_SOC_0_TO_30, /* 0-20 */
-	WLS_FAST_SOC_0_TO_30_HIGH, /* 21-35 */
-	WLS_FAST_SOC_30_TO_70, /* 36-55 */
-	WLS_FAST_SOC_30_TO_70_HIGH, /* 56-75 */
-	WLS_FAST_SOC_70_TO_90, /* 76-85 */
-	WLS_FAST_SOC_70_TO_90_HIGH, /* 86-90 */
+	WLS_FAST_SOC_0_TO_30,
+	WLS_FAST_SOC_30_TO_70,
+	WLS_FAST_SOC_70_TO_90,
 	WLS_FAST_SOC_MAX,
 };
 
@@ -475,29 +468,22 @@ enum {
 	WLS_BCC_TEMP_0_TO_50,
 	WLS_BCC_TEMP_50_TO_120,
 	WLS_BCC_TEMP_120_TO_160,
-	WLS_BCC_TEMP_160_TO_400, /*16 ~ 21*/
-	WLS_BCC_TEMP_160_TO_400_HIGH, /*21 ~ 35*/
-	WLS_BCC_TEMP_400_TO_440, /*35 ~ 44*/
+	WLS_BCC_TEMP_160_TO_400,
+	WLS_BCC_TEMP_400_TO_440,
 	WLS_BCC_TEMP_MAX,
 };
 
 enum {
-	WLS_BCC_STOP_0_TO_30, /* 0-20 */
-	WLS_BCC_STOP_0_TO_30_HIGH, /* 21-35 */
-	WLS_BCC_STOP_30_TO_70, /* 36-55 */
-	WLS_BCC_STOP_30_TO_70_HIGH, /* 56-75 */
-	WLS_BCC_STOP_70_TO_90, /* 76-85 */
-	WLS_BCC_STOP_70_TO_90_HIGH, /* 85-90 */
-	WLS_BCC_STOP_SOC_MAX,
+	WLS_BCC_STOP_0_TO_30,
+	WLS_BCC_STOP_30_TO_70,
+	WLS_BCC_STOP_70_TO_90,
+	WLS_BCC_STOP_MAX,
 };
 
 enum {
-	WLS_BCC_SOC_0_TO_30, /* 0-20 */
-	WLS_BCC_SOC_0_TO_30_HIGH, /* 21-35 */
-	WLS_BCC_SOC_30_TO_70, /* 36-55 */
-	WLS_BCC_SOC_30_TO_70_HIGH, /* 56-75 */
-	WLS_BCC_SOC_70_TO_90, /* 76-85 */
-	WLS_BCC_SOC_70_TO_90_HIGH, /* 85-90 */
+	WLS_BCC_SOC_0_TO_30,
+	WLS_BCC_SOC_30_TO_70,
+	WLS_BCC_SOC_70_TO_90,
 	WLS_BCC_SOC_MAX,
 };
 
@@ -536,53 +522,13 @@ enum wls_topic_item {
 	WLS_ITEM_MAX_PROJECT_POWER,
 	WLS_ITEM_UI_POWER,
 	WLS_ITEM_FW_UPGRADING,
-	WLS_ITEM_ICON_TYPE,
-	WLS_ITEM_TRACK_RECORD_WLS_TYPE,
-	WLS_ITEM_AUDIO_CAM_PMW,
-	WLS_ITEM_QUIET_MODE,
-	WLS_ITEM_TX_MANU_ID,
-	WLS_ITEM_VENDOR_ID,
-	WLS_ITEM_PRODUCT_ID,
-	WLS_ITEM_TRACK_RECORD_FASTCHG,
-	WLS_ITEM_TRACK_BREAK_MANU,
-	WLS_ITEM_PING_TIME,
-	WLS_ITEM_WLSPEN_SOC,
-	WLS_ITEM_TX_START_TYPE,
 };
 
 enum {
 	WLS_RX_COMU_CAP_AUTO,
-	WLS_RX_COMU_CAP_A,/*22nF*/
-	WLS_RX_COMU_CAP_B,/*47nF*/
-	WLS_RX_COMU_CAP_AB,/*22+47nF*/
-};
-
-enum {
-	FORCE_UPGRADE_NONE,
-	FORCE_UPGRADE_RX,
-	FORCE_UPGRADE_TX,
-};
-
-enum oplus_bt_type {
-	BT_UNKNOWN_TYPE = 0,
-	BT_CAR,
-	BT_MAG_HANDLE,
-};
-
-enum {
-	WLSPEN_STATUS_UNKOWN,
-	WLSPEN_STATUS_PRESENT,
-	WLSPEN_STATUS_PING,
-	WLSPEN_STATUS_CHGING,
-	WLSPEN_STATUS_FULL,
-	WLSPEN_STATUS_PING_TIMEOUT,
-	WLSPEN_STATUS_CHG_TIMEOUT,
-	WLSPEN_STATUS_ERR,
-};
-
-enum {
-	TX_POWER_BOOST,
-	TX_POWER_WIRED,
+	WLS_RX_COMU_CAP_A,
+	WLS_RX_COMU_CAP_B,
+	WLS_RX_COMU_CAP_AB,
 };
 
 #ifdef OPLUS_CHG_DEBUG
@@ -592,12 +538,4 @@ ssize_t oplus_chg_wls_upgrade_fw_store(struct oplus_mms *mms, const char *buf, s
 
 int oplus_chg_wls_set_status_keep(struct oplus_mms *mms, enum wls_status_keep_type status_keep);
 int oplus_chg_wls_get_break_sub_crux_info(struct oplus_mms *mms, char *crux_info);
-
-ssize_t oplus_chg_wls_rx_disable_show(struct oplus_mms *mms, char *buf);
-ssize_t oplus_chg_wls_rx_disable_store(struct oplus_mms *mms, const char *buf, size_t count);
-
-ssize_t oplus_chg_wls_bt_info_store(struct oplus_mms *mms, const char *buf, size_t count);
-ssize_t oplus_chg_wls_wlspen_info_store(struct oplus_mms *mms, const char *buf, size_t count);
-ssize_t oplus_chg_wls_wlspen_soc_store(struct oplus_mms *mms, const char *buf, size_t count);
-ssize_t oplus_chg_wls_wlspen_dischg_soc_store(struct oplus_mms *mms, const char *buf, size_t count);
 #endif /* __OPLUS_CHG_WLS_H__ */

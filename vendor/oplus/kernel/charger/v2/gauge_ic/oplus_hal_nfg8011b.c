@@ -15,12 +15,7 @@
 #include <linux/i2c.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-#include <linux/unaligned.h>
-#else
 #include <asm/unaligned.h>
-#endif
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
 #include <linux/of_gpio.h>
@@ -29,6 +24,7 @@
 #include <linux/iio/consumer.h>
 #include <linux/debugfs.h>
 #include <linux/kernel.h>
+#include <linux/version.h>
 #include <oplus_mms_gauge.h>
 #include "oplus_hal_bq27541.h"
 #include "oplus_hal_nfg8011b.h"
@@ -40,8 +36,6 @@ static struct gauge_sili_ic_alg_cfg_map cfg_mapping_table[] = {
 	{ BIT(SILI_STATIC_DSG_CTRL), NFG8011B_SILI_STATIC_DSG_CTRL_MASK },
 	{ BIT(SILI_MONITOR_MODE), NFG8011B_SILI_MONITOR_MODE_MASK},
 };
-
-static bool nfg8011b_firmware_support_fast_sampling(struct chip_bq27541 *chip);
 
 bool nfg8011b_sha256_hmac_authenticate(struct chip_bq27541 *chip)
 {
@@ -102,52 +96,6 @@ bool nfg8011b_sha256_hmac_authenticate(struct chip_bq27541 *chip)
 error:
 	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
 	return false;
-}
-
-int nfg8011b_get_car_c_parameters(struct chip_bq27541 *chip, int *car_c_ptr)
-{
-	int ret;
-	int data_check;
-	int value;
-	int try_count = NFG8011B_SUBCMD_TRY_COUNT;
-	u8 extend_data[14] = {0};
-	struct gauge_track_info_reg extend = { NFG8011B_SUBCMD_ALG_ADDR_1 , 12 };
-
-	if (!chip || !car_c_ptr)
-		return -EINVAL;
-
-	for (; try_count > 0; try_count--) {
-		mutex_lock(&chip->bq28z610_alt_manufacturer_access);
-		ret = bq27541_i2c_txsubcmd(chip, NFG8011B_DATAFLASHBLOCK, extend.addr);
-		if (ret < 0)
-			goto error;
-		usleep_range(1000, 1000);
-		ret = bq27541_read_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, (extend.len + 2), extend_data);
-		if (ret < 0)
-			goto error;
-		data_check = (extend_data[1] << 0x8) | extend_data[0];
-		mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-		if (data_check != extend.addr) {
-			chg_info("not match. add=0x%4x, count=%d, extend_data[0]=0x%2x, extend_data[1]=0x%2x\n",
-				extend.addr, try_count, extend_data[0], extend_data[1]);
-			usleep_range(2000, 2000);
-		} else {
-			break;
-		}
-	}
-	if (!try_count)
-		return -EINVAL;
-
-	/* data10 and data11 represent car values */
-	value = (extend_data[11] << 0x08) | extend_data[10];
-	if (value & 0x8000)
-		value = -((~(value - 1)) & 0xFFFF);
-	*car_c_ptr = value;
-	return 0;
-
-error:
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-	return ret;
 }
 
 int nfg8011b_get_qmax_parameters(struct chip_bq27541 *chip, int *cell_qmax)
@@ -318,6 +266,7 @@ int nfg8011b_get_info(struct chip_bq27541 *chip, u8 *info, int len)
 		{ chip->cmd_addr.reg_cc , 2 },
 		{ chip->cmd_addr.reg_soc , 2 },
 		{ chip->cmd_addr.reg_soh , 2 },
+		{ NFG8011B_REG_CIS_ALERT_LEVEL , 2 },
 	};
 	struct gauge_track_info_reg nfg8011b_extend[] = {
 		{ NFG8011B_SUBCMD_CHEMID, 2, 0, 1 },
@@ -333,8 +282,6 @@ int nfg8011b_get_info(struct chip_bq27541 *chip, u8 *info, int len)
 	size = ARRAY_SIZE(nfg8011b_extend);
 
 	for (i = 0; i < ARRAY_SIZE(standard); i++) {
-		if (chip->fpga_support && is_return_pre_value(chip))
-			return index;
 		ret = bq27541_read_i2c(chip, standard[i].addr, &data);
 		if (ret < 0)
 			continue;
@@ -343,8 +290,6 @@ int nfg8011b_get_info(struct chip_bq27541 *chip, u8 *info, int len)
 	}
 
 	for (i = 0; i < size; i++) {
-		if (chip->fpga_support && is_return_pre_value(chip))
-			return index;
 		try_count = NFG8011B_SUBCMD_TRY_COUNT;
 try:
 		mutex_lock(&chip->bq28z610_alt_manufacturer_access);
@@ -392,7 +337,7 @@ int nfg8011b_set_spare_power_enable(struct chip_bq27541 *chip)
 	u8 extend_data[4] = {0xC0, 0x00, 0x01, 0x00};
 	u8 checksum = 0;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 	mutex_lock(&chip->bq28z610_alt_manufacturer_access);
@@ -431,7 +376,7 @@ int nfg8011b_get_sili_ic_alg_term_volt(struct chip_bq27541 *chip, int *volt)
 	if (!chip || !volt)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 try:
@@ -477,7 +422,7 @@ int nfg8011b_get_sili_simulate_term_volt(struct chip_bq27541 *chip, int *volt)
 	if (!chip || !volt)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 try:
@@ -523,7 +468,7 @@ int nfg8011b_get_deep_dischg_counts(struct chip_bq27541 *chip, int *count)
 	if (!chip || !count)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return chip->deep_dischg_count_pre;
 
 try:
@@ -575,7 +520,7 @@ int nfg8011b_get_define_term_volt(struct chip_bq27541 *chip, int *volt)
 	if (!chip || !volt)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return chip->deep_term_volt_pre;
 
 try:
@@ -626,7 +571,7 @@ int nfg8011b_set_deep_dischg_counts(struct chip_bq27541 *chip, int count)
 	u8 checksum = 0;
 	struct gauge_track_info_reg extend = { NFG8011B_SUBCMD_DEEP_INFO_ADDR , 32 };
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 try:
@@ -708,7 +653,7 @@ static int nfg8011b_set_define_term_volt(struct chip_bq27541 *chip, int volt_mv)
 	u8 checksum = 0;
 	struct gauge_track_info_reg extend = { NFG8011B_SUBCMD_DEEP_INFO_ADDR , 32 };
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 try:
@@ -793,7 +738,7 @@ static int nfg8011b_set_effect_term_volt(struct chip_bq27541 *chip, int volt_mv)
 	if (!chip)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 	extend_data[0] = extend.addr & NFG8011B_DEEP_DISCHG_CHECK;
@@ -1054,7 +999,7 @@ int nfg8011b_set_sili_ic_alg_term_volt(struct chip_bq27541 *chip, int sys_term_v
 	u8 checksum = 0;
 	struct gauge_track_info_reg extend = { NFG8011B_SUBCMD_DEEP_INFO_ADDR , 32 };
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 try:
@@ -1138,7 +1083,7 @@ int nfg8011b_get_sili_lifetime_status(struct chip_bq27541 *chip, struct oplus_ga
 	if (!chip || !lifetime)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 try:
@@ -1177,150 +1122,6 @@ error:
 	return -EINVAL;
 }
 
-/* Check if firmware version >= min_version */
-static bool bq27541_check_fw_version(struct chip_bq27541 *chip, const char *min_version)
-{
-	u8 version_cmd[2] = {NFG8011B_FW_VERSION, 0x00};
-	u8 version_data[14] = {0};
-	int ret;
-
-	if (min_version == NULL) {
-		chg_info("min_version is NULL\n");
-		return false;
-	}
-
-	/* Read firmware version information */
-	ret = bq27541_write_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, sizeof(version_cmd), version_cmd);
-	if (ret < 0)
-		return false;
-
-	ret = bq27541_read_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, sizeof(version_data), version_data);
-	if (ret < 0 || version_data[0] != NFG8011B_FW_VERSION || version_data[1] != 0x00) {
-		chg_info("version read failed\n");
-		return false;
-	}
-
-	/* version string comparison */
-	return (memcmp(&(version_data[2]), min_version, 7) >= 0);
-}
-
-#define FW_VERSION_1_3_0_P1T4 (u8[]) {0x01, 0x03, 0x00, 'P', '1', 't', '4'}
-int nfg8011b_set_soc_froce_to_0_threshold(struct chip_bq27541 *chip, u16 voltage_mv, u16 time_sec)
-{
-	u8 read_cmd[2] = {NFG8011B_FORCE_TO_0, 0x00};
-	u8 write_data[6] = {NFG8011B_FORCE_TO_0, 0x00,
-				(u8)voltage_mv, (u8)(voltage_mv >> 8),
-				(u8)time_sec, (u8)(time_sec >> 8)};
-	u8 response[6];
-	u8 checksum = 0;
-	int ret;
-	int i;
-
-	if (chip == NULL) {
-		chg_info("chip is NULL\n");
-		return -EINVAL;
-	}
-
-	mutex_lock(&chip->bq28z610_alt_manufacturer_access);
-	/* Version check */
-	if (bq27541_check_fw_version(chip, FW_VERSION_1_3_0_P1T4) == false) {
-		chg_info("firmware version too old, need >=1.3.0P1T4\n");
-		ret = -EOPNOTSUPP;
-		goto error;
-	}
-
-	/* 1. Read current value for verification */
-	ret = bq27541_write_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, sizeof(read_cmd), read_cmd);
-	if (ret < 0) goto error;
-	ret = bq27541_read_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, sizeof(response), response);
-	if (ret < 0 || response[0] != 0xC3 || response[1] != 0x00) {
-		chg_info("read verification failed\n");
-		goto error;
-	}
-
-	/* 2. Write new threshold to RAM (with checksum) */
-	ret = bq27541_write_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, sizeof(write_data), write_data);
-	if (ret < 0)
-		goto error;
-
-	/* Calculate checksum */
-	for (i = 0; i < sizeof(write_data); i++)
-		checksum += write_data[i];
-	checksum = 0xFF - checksum;
-
-	ret = bq27541_i2c_txsubcmd_onebyte(chip, NFG8011B_AUTHENCHECKSUM, checksum);
-	if (ret < 0)
-		goto error;
-	ret = bq27541_i2c_txsubcmd_onebyte(chip, NFG8011B_AUTHENLEN, 0x08);
-	if (ret < 0)
-		goto error;
-
-	/* 3. Read back for verification */
-	ret = bq27541_write_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, sizeof(read_cmd), read_cmd);
-	if (ret < 0) goto error;
-	ret = bq27541_read_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, sizeof(response), response);
-	if (ret < 0 || memcmp(write_data, response, sizeof(write_data)) != 0) {
-		chg_info("write verification failed\n");
-		goto error;
-	}
-
-	chg_info("RAM froce_to_0 threshold updated success: %dmV %ds\n", voltage_mv, time_sec);
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-	return 0;
-
-error:
-	chg_info("RAM froce_to_0 threshold update failed\n");
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-	return (ret < 0) ? ret : -EINVAL;
-}
-
-int nfg8011b_set_battery_full(struct chip_bq27541 *chip, bool full)
-{
-	u8 mac_data[4] = {0x31, 0x00, 0xAA, 0x55};
-	u8 checksum = 0;
-	int ret;
-	int i;
-
-	if (chip == NULL) {
-		chg_info("chip is NULL\n");
-		return -EINVAL;
-	}
-
-	if (full == false) {
-		return 0;
-	}
-
-	mutex_lock(&chip->bq28z610_alt_manufacturer_access);
-	/* Version check */
-	if (bq27541_check_fw_version(chip, FW_VERSION_1_3_0_P1T4) == false) {
-		chg_info("firmware version too old, need >=1.3.0P1T4\n");
-		ret = -EOPNOTSUPP;
-		goto error;
-	}
-
-	/* Execute battery full report command */
-	ret = bq27541_write_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, ARRAY_SIZE(mac_data), mac_data);
-	if (ret < 0)
-		goto error;
-
-	for (i = 0; i < ARRAY_SIZE(mac_data); i++)
-		checksum = checksum + mac_data[i];
-	checksum = 0xff - (checksum & 0xff);
-	ret = bq27541_i2c_txsubcmd_onebyte(chip, NFG8011B_AUTHENCHECKSUM, checksum);
-	if (ret < 0)
-		goto error;
-	ret = bq27541_i2c_txsubcmd_onebyte(chip, NFG8011B_AUTHENLEN, 0x06);
-	if (ret < 0)
-		goto error;
-	chg_info("force set battery full success\n");
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-	return 0;
-
-error:
-	chg_info("force set battery full fail\n");
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-	return (ret < 0) ? ret : -EINVAL;
-}
 
 int nfg8011b_get_sili_lifetime_info(struct chip_bq27541 *chip, u8 *info, int len)
 {
@@ -1328,45 +1129,23 @@ int nfg8011b_get_sili_lifetime_info(struct chip_bq27541 *chip, u8 *info, int len
 	int j;
 	int ret;
 	int size;
-	int data = 0;
 	int index = 0;
 	int data_check;
 	int try_count = NFG8011B_SUBCMD_TRY_COUNT;
 	u8 extend_data[34] = {0};
-	bool support_fast_sampling;
-	struct gauge_track_info_reg standard[] = {
-		{ NFG8011B_REG_CIS_ALERT_LEVEL, 2},
-	};
 	struct gauge_track_info_reg *extend;
 	struct gauge_track_info_reg nfg8011b_extend[] = {
-		{ NFG8011B_SUBCMD_IPM_ADDR, 32, 0, 31},
-		{ NFG8011B_SUBCMD_ALG_ADDR_1, 12, 0, 11},
-		{ NFG8011B_SUBCMD_LIFETIME_1_ADDR, 8, 0, 7},
-		{ NFG8011B_SUBCMD_LIFETIME_2_ADDR, 24, 0, 23},
-		{ NFG8011B_SUBCMD_ISC_INFO_ADDR, 32, 22, 31},
-		{ NFG8011B_SUBCMD_ISC_LAST_TEN_ADDR, 20, 0, 19},
-		{ NFG8011B_REG_ENABLE_STATE, 1, 0, 0},
-		{ NFG8011B_SUBCMD_SOH2_ADDR, 6, 0, 5},
+		{ NFG8011B_SUBCMD_IPM_ADDR , 32, 0, 31 },
+		{ NFG8011B_SUBCMD_ALG_ADDR_1 , 12, 0, 11 },
+		{ NFG8011B_SUBCMD_LIFETIME_1_ADDR , 8, 0, 7 },
+		{ NFG8011B_SUBCMD_LIFETIME_2_ADDR , 24, 0, 23 },
+		{ NFG8011B_SUBCMD_ISC_INFO_ADDR , 32, 28, 31 },
 	};
 
 	extend = nfg8011b_extend;
 	size = ARRAY_SIZE(nfg8011b_extend);
 
-	for (i = 0; i < ARRAY_SIZE(standard); i++) {
-		if (chip->fpga_support && is_return_pre_value(chip))
-			return index;
-		ret = bq27541_read_i2c(chip, standard[i].addr, &data);
-		if (ret < 0)
-			continue;
-		index += snprintf(info + index, len - index,
-			"0x%02x=%02x,%02x|", standard[i].addr, (data & 0xff), ((data >> 8) & 0xff));
-	}
-
-	support_fast_sampling = nfg8011b_firmware_support_fast_sampling(chip);
 	for (i = 0; i < size; i++) {
-		if (!support_fast_sampling && extend[i].addr == NFG8011B_REG_ENABLE_STATE)
-			continue;
-
 		try_count = NFG8011B_SUBCMD_TRY_COUNT;
 try:
 		mutex_lock(&chip->bq28z610_alt_manufacturer_access);
@@ -1476,7 +1255,7 @@ int nfg8011b_get_sili_chemistry_info(struct chip_bq27541 *chip, u8 *info, int le
 	if (!chip)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) == 1)
+	if (atomic_read(&chip->suspended) == 1)
 		return -EINVAL;
 
 	if (len < CHEM_ID_LENGTH)
@@ -1518,7 +1297,7 @@ int nfg8011b_get_last_cc(struct chip_bq27541 *chip, int *cc)
 	if (!chip || !cc)
 		return -EINVAL;
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return chip->last_cc_pre;
 
 try:
@@ -1569,7 +1348,7 @@ int nfg8011b_set_last_cc(struct chip_bq27541 *chip, int cc)
 	u8 checksum = 0;
 	struct gauge_track_info_reg extend = { NFG8011B_SUBCMD_DEEP_INFO_ADDR , 32 };
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 try:
@@ -1659,7 +1438,7 @@ static int nfg8011b_block_check_conditions(struct chip_bq27541 *chip, u8 *buf, i
 		return -EINVAL;
 	}
 
-	if (is_return_pre_value(chip) || atomic_read(&chip->locked))
+	if (atomic_read(&chip->suspended) || atomic_read(&chip->locked))
 		return -EINVAL;
 
 	return 0;
@@ -1718,8 +1497,7 @@ error:
 	return -EINVAL;
 }
 
-int nfg8011b_write_block(struct chip_bq27541 *chip,
-	int addr, u8 *buf, int len, int offset, bool do_checksum, bool read_back)
+int nfg8011b_write_block(struct chip_bq27541 *chip, int addr, u8 *buf, int len, int offset, bool do_checksum)
 {
 	int ret;
 	int data_check;
@@ -1772,30 +1550,24 @@ try:
 	if (ret < 0)
 		goto error;
 
-	if (read_back) {
-		try_count = NFG8011B_SUBCMD_TRY_COUNT;
-		do {
-			data_check = true;
-			memset(extend_read_data, 0, NFG8011B_BLOCK_SIZE + 2);
-			usleep_range(15000, 15000);
-			ret = bq27541_i2c_txsubcmd(chip, NFG8011B_DATAFLASHBLOCK, addr);
-			if (ret < 0)
-				goto error;
-			usleep_range(1000, 1000);
-			ret = bq27541_read_i2c_block(chip,
-				NFG8011B_DATAFLASHBLOCK, NFG8011B_BLOCK_SIZE + 2, extend_read_data);
-			if (memcmp(extend_read_data, extend_write_data, NFG8011B_BLOCK_SIZE + 2)) {
-				chg_err("reg not match.extend_read_data =[%*ph]\n",
-					NFG8011B_BLOCK_SIZE + 2, extend_read_data);
-				chg_err("reg not match.extend_write_data=[%*ph]\n",
-					NFG8011B_BLOCK_SIZE + 2, extend_write_data);
-				data_check = false;
-			}
-		} while (!data_check && try_count--);
-		if (!data_check)
+	try_count = NFG8011B_SUBCMD_TRY_COUNT;
+	do {
+		data_check = true;
+		memset(extend_read_data, 0, NFG8011B_BLOCK_SIZE + 2);
+		usleep_range(15000, 15000);
+		ret = bq27541_i2c_txsubcmd(chip, NFG8011B_DATAFLASHBLOCK, addr);
+		if (ret < 0)
 			goto error;
-	}
-
+		usleep_range(1000, 1000);
+		ret = bq27541_read_i2c_block(chip, NFG8011B_DATAFLASHBLOCK, NFG8011B_BLOCK_SIZE + 2, extend_read_data);
+		if (memcmp(extend_read_data, extend_write_data, NFG8011B_BLOCK_SIZE + 2)) {
+			chg_err("reg not match.extend_read_data =[%*ph]\n", NFG8011B_BLOCK_SIZE + 2, extend_read_data);
+			chg_err("reg not match.extend_write_data=[%*ph]\n", NFG8011B_BLOCK_SIZE + 2, extend_write_data);
+			data_check = false;
+		}
+	} while (!data_check && try_count--);
+	if (!data_check)
+		goto error;
 	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
 	chg_info("addr=0x%04x offset=%d buf=[%*ph] write success\n", addr, offset, len, buf);
 	return 0;
@@ -1804,62 +1576,5 @@ error:
 	chg_info("addr=0x%04x offset=%d buf=[%*ph] write fail\n", addr, offset, len, buf);
 	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
 	return -EINVAL;
-}
-
-#define FW_VERSION_1_3_0_P1T2 (u8[]) {0x01, 0x03, 0x00, 'P', '1', 't', '2'}
-int nfg8011b_soc_centi_init(struct chip_bq27541 *chip)
-{
-	int rc = 0;
-
-	mutex_lock(&chip->bq28z610_alt_manufacturer_access);
-	if (bq27541_check_fw_version(chip, FW_VERSION_1_3_0_P1T2) == false) {
-		chg_info("firmware version too old, need >= 1.3.0P1T2\n");
-		rc = -ENOTSUPP;
-		goto error;
-	}
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-	chip->cmd_addr.reg_soc_centi = NFG801B_REG_RSOC_CENTI;
-
-	return 0;
-error:
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-	return rc;
-}
-
-static bool nfg8011b_firmware_support_fast_sampling(struct chip_bq27541 *chip)
-{
-	mutex_lock(&chip->bq28z610_alt_manufacturer_access);
-	if (bq27541_check_fw_version(chip, FW_VERSION_1_3_0_P1T4) == false) {
-		chg_info("firmware version too old, need >= 1.3.0P1T4\n");
-		mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-		return false;
-	}
-	mutex_unlock(&chip->bq28z610_alt_manufacturer_access);
-
-	return true;
-}
-
-int nfg8011b_set_fast_sampling(struct chip_bq27541 *chip, bool enable)
-{
-	int ret;
-	bool firmware_support;
-	u8 enable_buf[] = {0xa1, 0xa2, 0xa3, 0xa4};
-	u8 disable_buf[] = {0x01, 0x02, 0x03, 0x04};
-
-	firmware_support = nfg8011b_firmware_support_fast_sampling(chip);
-	if (!firmware_support)
-		return -ENOTSUPP;
-
-	if (enable)
-		ret = nfg8011b_write_block(chip, NFG8011B_REG_ENABLE_FAST_SAMP,
-			enable_buf, sizeof(enable_buf), 0, false, false);
-	else
-		ret = nfg8011b_write_block(chip, NFG8011B_REG_DISABLE_FAST_SAMP,
-			disable_buf, sizeof(disable_buf), 0, false, false);
-
-	if (!ret)
-		chip->fast_sampling_enable = enable;
-
-	return ret;
 }
 

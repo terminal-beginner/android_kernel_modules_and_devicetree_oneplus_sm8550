@@ -8,7 +8,6 @@
 
 #include <linux/i2c.h>
 #include <linux/power_supply.h>
-#include <linux/version.h>
 #include "oplus_chg_symbol.h"
 
 #define OPLUS_BATTINFO_DATE_SIZE 11
@@ -52,20 +51,6 @@ struct oplus_external_auth_chip {
 	struct oplus_test_result test_result;
 	struct delayed_work test_work;
 };
-
-typedef enum {
-	DEC_CV_FG_UNKNOWN,
-	PACK_DOUBLE_SERIES,
-	PACK_DOUBLE_PARALLE,
-	PACK_SINGLE,
-	PACK_SOH,
-	QCOM_FG,
-	MTK_FG,
-	MB_TI,
-	MB_CW,
-	MB_SMI,
-	DEC_CV_FG_MAX,
-} DEC_CV_FG_TYPE;
 
 struct oplus_gauge_operations {
 	int (*get_battery_mvolts)(void);
@@ -121,8 +106,6 @@ struct oplus_gauge_operations {
 	int (*get_prev_bcc_parameters)(char *buf);
 	int (*set_bcc_parameters)(const char *buf);
 	bool (*set_gauge_power_sel)(int sel);
-	bool (*set_gauge_aging)(int sel);
-	bool (*set_gauge_cycles)(int sel);
 	bool (*check_rc_sfr)(void);
 	int (*soft_reset_rc_sfr)(void);
 	int (*get_gauge_info)(u8 *info, int len);
@@ -148,14 +131,6 @@ struct oplus_gauge_operations {
 	int (*set_batt_used_flag)(int used_flag);
 	int (*get_battinfo_sn)(char buf[], int len);
 	int (*get_gauge_car_c)(int *car_c);
-	int (*get_dec_fg_type)(void);
-	int (*get_fg_vct)(void);
-	bool (*set_fg_vct)(int vct);
-	void (*sync_plugin_state)(void);
-	int (*set_sili_ic_deep_term_volt)(int volt);
-	int (*get_sili_ic_deep_term_volt)(void);
-	void (*get_device_name)(char *name, int len);
-	int (*get_battery_dod)(int index);
 };
 
 /****************************************
@@ -166,9 +141,6 @@ struct oplus_gauge_operations {
  * Returns: 0 - success; -1/errno - failed
  ****************************************/
 void oplus_gauge_init(struct oplus_gauge_chip *chip);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-void oplus_mtk_plat_gauge_init(void);
-#endif
 void oplus_plat_gauge_init(struct oplus_plat_gauge_operations *ops);
 void oplus_external_auth_init(struct oplus_external_auth_chip *chip);
 void oplus_sub_gauge_init(struct oplus_gauge_chip *chip);
@@ -264,9 +236,6 @@ int oplus_gauge_get_calib_time(int *dod_calib_time, int *qmax_calib_time, int ga
 void oplus_gauge_cal_model_check(bool ffc_state);
 int oplus_gauge_check_bqfs_fw(void);
 int oplus_gauge_bqfs_data_check(void);
-int oplus_gauge_get_dec_fg_type(void);
-int oplus_gauge_get_vct(void);
-bool oplus_gauge_set_vct(int vct);
 int oplus_gauge_get_bat_info_manu_date(char *info, int len);
 int oplus_gauge_get_bat_info_first_usage_date(char *info, int len);
 int oplus_gauge_set_bat_info_first_usage_date(const char *info);

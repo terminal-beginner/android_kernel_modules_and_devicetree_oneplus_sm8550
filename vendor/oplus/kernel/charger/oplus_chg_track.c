@@ -272,7 +272,6 @@ struct oplus_chg_track_full_curr_limit {
 	int one_full_trigger_curr;
 	int one_full_trigger_temp;
 	int n_full_trigger_cnt;
-	int batt_r;
 };
 
 struct oplus_chg_track_app_ref {
@@ -894,7 +893,6 @@ static struct flag_reason_table track_flag_reason_table[] = {
 	{ TRACK_NOTIFY_FLAG_WLS_TRX_INFO, "WlsTrxInfo" },
 	{ TRACK_NOTIFY_FLAG_PARALLELCHG_FOLDMODE_INFO, "ParallelChgFoldModeInfo" },
 	{ TRACK_NOTIFY_FLAG_MMI_CHG_INFO, "MmiChgInfo" },
-	{ TRACK_NOTIFY_FLAG_PLC_CHG_INFO, "PlcChgInfo" },
 	{ TRACK_NOTIFY_FLAG_SLOW_CHG_INFO, "SlowChgInfo" },
 	{ TRACK_NOTIFY_FLAG_CHG_CYCLE_INFO, "ChgCycleInfo" },
 	{ TRACK_NOTIFY_FLAG_TTF_INFO, "TtfInfo" },
@@ -1668,11 +1666,7 @@ int oplus_chg_olc_config_set(const char *buf)
 		return -1;
 
 	cfg_chip = &g_track_chip->track_cfg;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-	strscpy(config_buf, buf, OLC_CONFIG_SIZE);
-#else
 	strlcpy(config_buf, buf, OLC_CONFIG_SIZE);
-#endif
 	tmpbuf = config_buf;
 
 	config = strsep(&tmpbuf, ",");
@@ -1942,7 +1936,7 @@ static void oplus_track_upload_ttf_info(struct work_struct *work)
 	oplus_chg_track_obtain_power_info(&(ttf_info_p->load_trigger_info->crux_info[index]),
 					  OPLUS_CHG_TRACK_CURX_INFO_LEN - index);
 
-	oplus_chg_track_upload_trigger_data(ttf_info_p->load_trigger_info);
+	oplus_chg_track_upload_trigger_data(*(ttf_info_p->load_trigger_info));
 	if (ttf_info_p->load_trigger_info) {
 		kfree(ttf_info_p->load_trigger_info);
 		ttf_info_p->load_trigger_info = NULL;
@@ -2012,7 +2006,7 @@ static void oplus_track_upload_bcc_err_info(struct work_struct *work)
 	index += snprintf(&(bcc_err->bcc_err_load_trigger->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
 			  "$$curx_info@@%s", bcc_err->bcc_err.data_buf);
 
-	oplus_chg_track_upload_trigger_data(bcc_err->bcc_err_load_trigger);
+	oplus_chg_track_upload_trigger_data(*(bcc_err->bcc_err_load_trigger));
 	if (bcc_err->bcc_err_load_trigger) {
 		kfree(bcc_err->bcc_err_load_trigger);
 		bcc_err->bcc_err_load_trigger = NULL;
@@ -2075,7 +2069,7 @@ static void oplus_track_upload_uisoh_info(struct work_struct *work)
 			OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
 			"$$curx_info@@%s", uisoh_info_p->uisoh_info.data_buf);
 
-	oplus_chg_track_upload_trigger_data(uisoh_info_p->uisoh_info_load_trigger);
+	oplus_chg_track_upload_trigger_data(*(uisoh_info_p->uisoh_info_load_trigger));
 	if (uisoh_info_p->uisoh_info_load_trigger) {
 		kfree(uisoh_info_p->uisoh_info_load_trigger);
 		uisoh_info_p->uisoh_info_load_trigger = NULL;
@@ -2127,7 +2121,7 @@ static void oplus_track_upload_parallelchg_foldmode_info(struct work_struct *wor
 					    strlen(parallel_foldmode_p->load_trigger_info->crux_info),
 					    sizeof(parallel_foldmode_p->load_trigger_info->crux_info));
 
-	oplus_chg_track_upload_trigger_data(parallel_foldmode_p->load_trigger_info);
+	oplus_chg_track_upload_trigger_data(*(parallel_foldmode_p->load_trigger_info));
 	if (parallel_foldmode_p->load_trigger_info) {
 		kfree(parallel_foldmode_p->load_trigger_info);
 		parallel_foldmode_p->load_trigger_info = NULL;
@@ -2198,7 +2192,7 @@ static void oplus_track_upload_anti_expansion_info(struct work_struct *work)
 			bae_info_p->bae_info.anti_expansion_high_risk_of_6hours,
 			bae_info_p->bae_info.anti_expansion_risk_state_of_21days);
 
-	oplus_chg_track_upload_trigger_data(bae_info_p->bae_info_load_trigger);
+	oplus_chg_track_upload_trigger_data(*(bae_info_p->bae_info_load_trigger));
 	if (bae_info_p->bae_info_load_trigger) {
 		kfree(bae_info_p->bae_info_load_trigger);
 		bae_info_p->bae_info_load_trigger = NULL;
@@ -2439,7 +2433,7 @@ static void oplus_track_upload_wls_third_err_info(struct work_struct *work)
 			  OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$curx_info@@%s",
 			  wls_third_err->wls_third_err.data_buf);
 
-	oplus_chg_track_upload_trigger_data(wls_third_err->wls_third_err_load_trigger);
+	oplus_chg_track_upload_trigger_data(*(wls_third_err->wls_third_err_load_trigger));
 	if (wls_third_err->wls_third_err_load_trigger) {
 		kfree(wls_third_err->wls_third_err_load_trigger);
 		wls_third_err->wls_third_err_load_trigger = NULL;
@@ -3266,7 +3260,7 @@ static void oplus_chg_track_rechg_info_trigger_work(struct work_struct *work)
 		track_status->debug_uisoc, track_status->batt_max_vol,
 		track_status->prop_status);
 
-	oplus_chg_track_upload_trigger_data(chip->rechg_info_trigger);
+	oplus_chg_track_upload_trigger_data(*(chip->rechg_info_trigger));
 	kfree(chip->rechg_info_trigger);
 	chip->rechg_info_trigger = NULL;
 
@@ -3460,7 +3454,7 @@ static void oplus_chg_track_uisoc_load_trigger_work(struct work_struct *work)
 	if (!chip)
 		return;
 
-	oplus_chg_track_upload_trigger_data(&(chip->uisoc_load_trigger));
+	oplus_chg_track_upload_trigger_data(chip->uisoc_load_trigger);
 }
 
 static void oplus_chg_track_soc_trigger_work(struct work_struct *work)
@@ -3471,7 +3465,7 @@ static void oplus_chg_track_soc_trigger_work(struct work_struct *work)
 	if (!chip)
 		return;
 
-	oplus_chg_track_upload_trigger_data(&(chip->soc_trigger));
+	oplus_chg_track_upload_trigger_data(chip->soc_trigger);
 }
 
 static void oplus_chg_track_uisoc_trigger_work(struct work_struct *work)
@@ -3482,7 +3476,7 @@ static void oplus_chg_track_uisoc_trigger_work(struct work_struct *work)
 	if (!chip)
 		return;
 
-	oplus_chg_track_upload_trigger_data(&(chip->uisoc_trigger));
+	oplus_chg_track_upload_trigger_data(chip->uisoc_trigger);
 }
 
 static void oplus_chg_track_uisoc_to_soc_trigger_work(struct work_struct *work)
@@ -3493,7 +3487,7 @@ static void oplus_chg_track_uisoc_to_soc_trigger_work(struct work_struct *work)
 	if (!chip)
 		return;
 
-	oplus_chg_track_upload_trigger_data(&(chip->uisoc_to_soc_trigger));
+	oplus_chg_track_upload_trigger_data(chip->uisoc_to_soc_trigger);
 }
 
 int oplus_chg_track_obtain_general_info(u8 *curx, int index, int len)
@@ -3597,20 +3591,6 @@ static int oplus_chg_track_pack_cool_down_stats(struct oplus_chg_track_status *t
 			  cool_down_stats_table[i].level_name,
 			  cool_down_stats_table[i].time * TRACK_THRAD_PERIOD_TIME_S);
 	pr_debug("i=%d, cool_down_pack[%s]\n", i, cool_down_pack);
-
-	return 0;
-}
-
-int oplus_chg_track_set_fcl_batt_r(int batt_r)
-{
-	struct oplus_chg_track *chip = g_track_chip;
-	struct oplus_chg_track_full_curr_limit *fcl;
-
-	if (!chip)
-		return -EINVAL;
-
-	fcl = &(chip->track_status.fcl);
-	fcl->batt_r = batt_r;
 
 	return 0;
 }
@@ -3873,13 +3853,11 @@ static void oplus_chg_track_record_charger_info(struct oplus_chg_chip *chip, opl
 				  track_status->slow_chg_pct, track_status->slow_chg_watt);
 	}
 
-	if (index < OPLUS_CHG_TRACK_CURX_INFO_LEN) {
-		index += scnprintf(&(p_trigger_data->crux_info[index]),
-			  OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$fcl@@%d,%d,%d,%d,%d,%d",
+	index += snprintf(&(p_trigger_data->crux_info[index]),
+			  OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$fcl@@%d,%d,%d,%d,%d",
 			  track_status->fcl.one_full_trigger_cnt, track_status->fcl.one_full_trigger_volt,
 			  track_status->fcl.one_full_trigger_curr, track_status->fcl.one_full_trigger_temp,
-			  track_status->fcl.n_full_trigger_cnt, track_status->fcl.batt_r);
-	}
+			  track_status->fcl.n_full_trigger_cnt);
 
 	index += snprintf(&(p_trigger_data->crux_info[index]),
 			  OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
@@ -3901,7 +3879,7 @@ static void oplus_chg_track_charger_info_trigger_work(struct work_struct *work)
 
 	chip->track_status.wls_need_upload = false;
 	chip->track_status.wls_need_upload = false;
-	oplus_chg_track_upload_trigger_data(&(chip->charger_info_trigger));
+	oplus_chg_track_upload_trigger_data(chip->charger_info_trigger);
 }
 
 static void oplus_chg_track_no_charging_trigger_work(struct work_struct *work)
@@ -3914,7 +3892,7 @@ static void oplus_chg_track_no_charging_trigger_work(struct work_struct *work)
 
 	chip->track_status.wls_need_upload = false;
 	chip->track_status.wls_need_upload = false;
-	oplus_chg_track_upload_trigger_data(&(chip->no_charging_trigger));
+	oplus_chg_track_upload_trigger_data(chip->no_charging_trigger);
 }
 
 static void oplus_chg_track_slow_charging_trigger_work(struct work_struct *work)
@@ -3927,7 +3905,7 @@ static void oplus_chg_track_slow_charging_trigger_work(struct work_struct *work)
 
 	chip->track_status.wls_need_upload = false;
 	chip->track_status.wls_need_upload = false;
-	oplus_chg_track_upload_trigger_data(&(chip->slow_charging_trigger));
+	oplus_chg_track_upload_trigger_data(chip->slow_charging_trigger);
 }
 
 static void oplus_chg_track_charging_break_trigger_work(struct work_struct *work)
@@ -3938,7 +3916,7 @@ static void oplus_chg_track_charging_break_trigger_work(struct work_struct *work
 	if (!chip)
 		return;
 
-	oplus_chg_track_upload_trigger_data(&(chip->charging_break_trigger));
+	oplus_chg_track_upload_trigger_data(chip->charging_break_trigger);
 }
 
 static void oplus_chg_track_wls_charging_break_trigger_work(struct work_struct *work)
@@ -3949,7 +3927,7 @@ static void oplus_chg_track_wls_charging_break_trigger_work(struct work_struct *
 	if (!chip)
 		return;
 
-	oplus_chg_track_upload_trigger_data(&(chip->wls_charging_break_trigger));
+	oplus_chg_track_upload_trigger_data(chip->wls_charging_break_trigger);
 }
 
 static void oplus_chg_track_cal_chg_five_mins_capacity_work(struct work_struct *work)
@@ -4092,13 +4070,13 @@ static void oplus_chg_track_check_plugout_work(struct work_struct *work)
 			track_chip->plugout_state_trigger.flag_reason = TRACK_NOTIFY_FLAG_DUMMY_START_ABNORMAL;
 
 		oplus_chg_track_record_charger_info(chip, &track_chip->plugout_state_trigger, track_status);
-		oplus_chg_track_upload_trigger_data(&(track_chip->plugout_state_trigger));
+		oplus_chg_track_upload_trigger_data(track_chip->plugout_state_trigger);
 	}
 
 	if (track_status->debug_plugout_state) {
 		track_chip->plugout_state_trigger.flag_reason = track_status->debug_plugout_state;
 		oplus_chg_track_record_charger_info(chip, &track_chip->plugout_state_trigger, track_status);
-		oplus_chg_track_upload_trigger_data(&(track_chip->plugout_state_trigger));
+		oplus_chg_track_upload_trigger_data(track_chip->plugout_state_trigger);
 		track_status->debug_plugout_state = 0;
 	}
 }
@@ -4398,25 +4376,25 @@ static bool oplus_chg_track_trigger_data_is_valid(oplus_chg_track_trigger *pdata
 	return ret;
 }
 
-int oplus_chg_track_upload_trigger_data(oplus_chg_track_trigger *data)
+int oplus_chg_track_upload_trigger_data(oplus_chg_track_trigger data)
 {
 	int rc;
 	struct oplus_chg_track *chip = g_track_chip;
 	char flag_reason_tag[OPLUS_CHG_TRIGGER_REASON_TAG_LEN] = { 0 };
 
-	if (!g_track_chip || !data)
+	if (!g_track_chip)
 		return TRACK_CMD_ERROR_CHIP_NULL;
 
-	if (!oplus_chg_track_trigger_data_is_valid(data))
+	if (!oplus_chg_track_trigger_data_is_valid(&data))
 		return TRACK_CMD_ERROR_DATA_INVALID;
 
 	pr_debug("start\n");
 	mutex_lock(&chip->trigger_ack_lock);
 	mutex_lock(&chip->trigger_data_lock);
 	memset(&chip->trigger_data, 0, sizeof(oplus_chg_track_trigger));
-	chip->trigger_data.type_reason = data->type_reason;
-	chip->trigger_data.flag_reason = data->flag_reason;
-	strncpy(chip->trigger_data.crux_info, data->crux_info, OPLUS_CHG_TRACK_CURX_INFO_LEN - 1);
+	chip->trigger_data.type_reason = data.type_reason;
+	chip->trigger_data.flag_reason = data.flag_reason;
+	strncpy(chip->trigger_data.crux_info, data.crux_info, OPLUS_CHG_TRACK_CURX_INFO_LEN - 1);
 	pr_debug("type_reason:%d, flag_reason:%d, crux_info[%s]\n", chip->trigger_data.type_reason,
 		chip->trigger_data.flag_reason, chip->trigger_data.crux_info);
 	chip->trigger_data_ok = true;
@@ -4589,7 +4567,7 @@ static int oplus_chg_adsp_track_thread(void *data)
 			oplus_chg_track_obtain_power_info(chip->chg_power_info, sizeof(chip->chg_power_info));
 			index += snprintf(&(ap_data->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s",
 					  chip->chg_power_info);
-			oplus_chg_track_upload_trigger_data(ap_data);
+			oplus_chg_track_upload_trigger_data(*ap_data);
 		}
 		pr_debug("crux_info:%s\n", adsp_data->adsp_crux_info);
 	}
@@ -7406,7 +7384,7 @@ static void oplus_chg_track_gauge_info_work(struct work_struct *work)
 		container_of(dwork, struct oplus_chg_track, gauge_info.load_trigger_work);
 
 	if (chip->gauge_info.load_trigger) {
-		oplus_chg_track_upload_trigger_data(chip->gauge_info.load_trigger);
+		oplus_chg_track_upload_trigger_data(*(chip->gauge_info.load_trigger));
 		kfree(chip->gauge_info.load_trigger);
 		chip->gauge_info.load_trigger = NULL;
 	}
@@ -7420,7 +7398,7 @@ static void oplus_chg_track_sub_gauge_info_work(struct work_struct *work)
 		container_of(dwork, struct oplus_chg_track, sub_gauge_info.load_trigger_work);
 
 	if (chip->sub_gauge_info.load_trigger) {
-		oplus_chg_track_upload_trigger_data(chip->sub_gauge_info.load_trigger);
+		oplus_chg_track_upload_trigger_data(*(chip->sub_gauge_info.load_trigger));
 		kfree(chip->sub_gauge_info.load_trigger);
 		chip->sub_gauge_info.load_trigger = NULL;
 	}
@@ -7681,7 +7659,7 @@ static void oplus_chg_track_ntc_abnormal_info_trigger_work(struct work_struct *w
 	struct oplus_chg_track *chip = container_of(dwork, struct oplus_chg_track, ntc_abnormal_info_trigger_work);
 
 	if (chip->ntc_abnormal_info_trigger) {
-		oplus_chg_track_upload_trigger_data(chip->ntc_abnormal_info_trigger);
+		oplus_chg_track_upload_trigger_data(*(chip->ntc_abnormal_info_trigger));
 		kfree(chip->ntc_abnormal_info_trigger);
 		chip->ntc_abnormal_info_trigger = NULL;
 	}
@@ -7909,11 +7887,7 @@ adsp_kfifo_err:
 	return rc;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-static void oplus_chg_track_driver_remove(struct platform_device *pdev)
-#else
 static int oplus_chg_track_driver_remove(struct platform_device *pdev)
-#endif
 {
 	struct oplus_chg_track *track_dev = platform_get_drvdata(pdev);
 
@@ -7928,9 +7902,7 @@ static int oplus_chg_track_driver_remove(struct platform_device *pdev)
 	kfree(track_dev->track_status.bcc_info);
 	kfifo_free(&(track_dev->adsp_fifo));
 	devm_kfree(&pdev->dev, track_dev);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	return 0;
-#endif
 }
 
 static const struct of_device_id oplus_chg_track_match[] = {

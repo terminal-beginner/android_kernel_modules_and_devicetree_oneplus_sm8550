@@ -483,6 +483,8 @@ static void oplus_retention_present_check_work(struct work_struct *work)
 	int ret = 0;
 
 	oplus_state_retention_notify(chip->retention_topic, chip->irq_plugin);
+	chip->cc_detect = oplus_wired_get_hw_detect_recheck();
+	chip->detect_flag = chip->cc_detect;
 	schedule_delayed_work(&chip->update_work, 0);
 	chip->connect_status_flag = oplus_state_retention(chip->retention_topic);
 	chg_debug("plugin = %d, connect_status_flag =%d\n", chip->irq_plugin, chip->connect_status_flag);
@@ -512,7 +514,7 @@ static void oplus_retention_chg_wired_subs_callback(struct mms_subscribe *subs,
 			chip->wired_online = !!data.intval;
 			if (!chip->wired_online)
 				schedule_delayed_work(&chip->online_check_work, 0);
-			if (chip->irq_plug_flag == 0 && !chip->wired_online)
+			if (chip->irq_plug_flag == 0)
 				schedule_delayed_work(&chip->present_check_work, 0);
 			break;
 		case WIRED_ITEM_CHG_TYPE:
@@ -570,12 +572,6 @@ static void oplus_retention_chg_subscribe_wired_topic(struct oplus_mms *topic,
 	chip->wired_online = !!data.intval;
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_CHG_TYPE, &data, true);
 	chip->wired_type = data.intval;
-	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_CC_DETECT, &data, true);
-	chip->cc_detect = data.intval;
-	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_PRESENT, &data, true);
-	chip->irq_plugin = data.intval;
-	if (chip->irq_plugin)
-		schedule_delayed_work(&chip->present_check_work, 0);
 }
 
 static void oplus_retention_chg_cpa_subs_callback(struct mms_subscribe *subs,
@@ -830,31 +826,21 @@ static int oplus_chg_state_retention_probe(struct platform_device *pdev)
 	return 0;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-static void oplus_retention_charge_remove(struct platform_device *pdev)
-#else
 static int oplus_retention_charge_remove(struct platform_device *pdev)
-#endif
 {
 	struct oplus_retention_charge *chip = platform_get_drvdata(pdev);
 
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	if (get_eng_version() == FACTORY) {
 		chg_info("FACTORY MODE not support retention_chg.\n");
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 		return 0;
-#else
-		return;
-#endif
 	}
 #endif
 	if (!IS_ERR_OR_NULL(chip->wired_subs))
 		oplus_mms_unsubscribe(chip->wired_subs);
 	devm_kfree(&pdev->dev, chip);
 	kfree(retention);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	return 0;
-#endif
 }
 
 static const struct of_device_id oplus_retention_charge_match[] = {

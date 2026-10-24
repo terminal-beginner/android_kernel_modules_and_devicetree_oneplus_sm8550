@@ -473,30 +473,12 @@ static int cw_update_data(struct cw_battery *cw_bat)
 {
 	int ret = NUM_0;
 
-	ret = cw_get_voltage(cw_bat);
-	if (ret < 0)
-		chg_err("cw_get_voltage error, ret = %d\n", ret);
-
-	ret = cw_get_capacity(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_capacity error, ret = %d\n", ret);
-
-	ret = cw_get_temp(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_temp error, ret = %d\n", ret);
-
-	ret = cw_get_current(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_current error, ret = %d\n", ret);
-
-	ret = cw_get_cycle_count(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_cycle_count error, ret = %d\n", ret);
-
-	ret = cw_get_soh(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_soh error, ret = %d\n", ret);
-
+	ret += cw_get_voltage(cw_bat);
+	ret += cw_get_capacity(cw_bat);
+	ret += cw_get_temp(cw_bat);
+	ret += cw_get_current(cw_bat);
+	ret += cw_get_cycle_count(cw_bat);
+	ret += cw_get_soh(cw_bat);
 	chg_err("vol = %d  current = %ld cap = %d temp = %d\n",
 		cw_bat->voltage, cw_bat->cw_current, cw_bat->ui_soc, cw_bat->temp);
 
@@ -507,38 +489,14 @@ static int cw_init_data(struct cw_battery *cw_bat)
 {
 	int ret = NUM_0;
 
-	ret = cw_get_chip_id(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_chip_id error, ret = %d\n", ret);
-
-	ret = cw_get_voltage(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_voltage error, ret = %d\n", ret);
-
-	ret = cw_get_capacity(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_capacity error, ret = %d\n", ret);
-
-	ret = cw_get_temp(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_temp error, ret = %d\n", ret);
-
-	ret = cw_get_current(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_current error, ret = %d\n", ret);
-
-	ret = cw_get_cycle_count(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_cycle_count error, ret = %d\n", ret);
-
-	ret = cw_get_soh(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_soh error, ret = %d\n", ret);
-
-	ret = cw_get_fw_version(cw_bat);
-	if (ret < 0)
-        	chg_err("cw_get_fw_version error, ret = %d\n", ret);
-
+	ret += cw_get_chip_id(cw_bat);
+	ret += cw_get_voltage(cw_bat);
+	ret += cw_get_capacity(cw_bat);
+	ret += cw_get_temp(cw_bat);
+	ret += cw_get_current(cw_bat);
+	ret += cw_get_cycle_count(cw_bat);
+	ret += cw_get_soh(cw_bat);
+	ret += cw_get_fw_version(cw_bat);
 	chg_err("chip_id = %d vol = %d  cur = %ld cap = %d temp = %d  fw_version = %d\n",
 		cw_bat->chip_id, cw_bat->voltage, cw_bat->cw_current, cw_bat->ui_soc, cw_bat->temp, cw_bat->fw_version);
 
@@ -767,7 +725,7 @@ static int cw2217_get_battery_mvolts(void)
 static int  cw2217_get_battery_fc(void)
 {
 	cw_get_soh(g_cw_bat);
-	g_cw_bat->fcc = (g_cw_bat->soh * g_cw_bat->design_capacity) / SOH_INIT_VALUE;
+	g_cw_bat->fcc = (g_cw_bat->soh/SOH_INIT_VALUE)*g_cw_bat->design_capacity;
         return g_cw_bat->fcc;
 }
 
@@ -1010,13 +968,6 @@ static int cw2217b_fw_check(void)
 	return rc;
 }
 
-static int cw2217_get_dec_fg_type(void)
-{
-	chg_info(" %d\n", MB_CW);
-
-	return MB_CW;
-}
-
 static struct oplus_gauge_operations battery_cw2217_gauge = {
         .get_battery_mvolts			= cw2217_get_battery_mvolts,
         .get_battery_fc				= cw2217_get_battery_fc,
@@ -1050,7 +1001,6 @@ static struct oplus_gauge_operations battery_cw2217_gauge = {
         .get_batt_soh				= cw2217_get_soh,
         .get_gauge_info				= cw2217_get_info,
         .bqfs_fw_check				= cw2217b_fw_check,
-        .get_dec_fg_type 			= cw2217_get_dec_fg_type,
 };
 
 static ssize_t
@@ -1187,7 +1137,7 @@ static void cw2217b_track_upgrade_err_load_trigger_work(struct work_struct *work
 	if (!chip->cw_err_load_trigger)
 		return;
 
-	oplus_chg_track_upload_trigger_data(chip->cw_err_load_trigger);
+	oplus_chg_track_upload_trigger_data(*(chip->cw_err_load_trigger));
 
 	kfree(chip->cw_err_load_trigger);
 	chip->cw_err_load_trigger = NULL;
@@ -1265,7 +1215,7 @@ static int cw2217_probe(struct i2c_client *client, const struct i2c_device_id *i
 	}
 	if (ret) {
 		chg_err("%s : cw2217 init fail!\n", __func__);
-		return -EPROBE_DEFER;
+		return ret;
 	}
 
 	ret = cw_init_data(cw_bat);

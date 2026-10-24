@@ -2085,7 +2085,7 @@ static int oplus_chg_wls_track_upload_rx_err_info(struct oplus_chg_wls *wls_dev,
 
 static int oplus_chg_wls_set_trx_enable(struct oplus_chg_wls *wls_dev, bool en)
 {
-	char *trx_crux_info = NULL;
+	char trx_crux_info[OPLUS_CHG_TRACK_CURX_INFO_LEN] = {0};
 	struct oplus_chg_wls_status *wls_status = &wls_dev->wls_status;
 	int rc = 0;
 
@@ -2171,17 +2171,11 @@ static int oplus_chg_wls_set_trx_enable(struct oplus_chg_wls *wls_dev, bool en)
 		if (wls_status->trx_online && wls_status->trx_transfer_start_time &&
 		   (wls_status->trx_transfer_end_time - wls_status->trx_transfer_start_time >
 		    WLS_TRX_INFO_UPLOAD_THD_2MINS)) {
-			trx_crux_info = (char*)kmalloc(OPLUS_CHG_TRACK_CURX_INFO_LEN, GFP_KERNEL);
-			if (trx_crux_info != NULL) {
-				oplus_chg_wls_update_track_info(
-					wls_dev, trx_crux_info, false);
-				oplus_chg_wls_track_upload_trx_general_info(
-					wls_dev, trx_crux_info,
-					wls_status->trx_usb_present_once);
-				kfree(trx_crux_info);
-			} else {
-				pr_info("%s: trx_crux_info kmalloc fail!\n", __func__);
-			}
+			oplus_chg_wls_update_track_info(
+				wls_dev, trx_crux_info, false);
+			oplus_chg_wls_track_upload_trx_general_info(
+				wls_dev, trx_crux_info,
+				wls_status->trx_usb_present_once);
 		}
 		oplus_chg_wls_reset_variables(wls_dev);
 		if (is_batt_psy_available(wls_dev))
@@ -4948,11 +4942,8 @@ static int oplus_chg_wls_rx_handle_state_default(struct oplus_chg_wls *wls_dev)
 			goto out;*/
 		case WLS_ADAPTER_TYPE_VOOC:
 			rc = oplus_chg_wls_get_third_adapter_v_id(wls_dev);
-			if (rc < 0) {
-				wls_status->wls_type = OPLUS_CHG_WLS_BPP;
+			if (rc < 0)
 				goto out;
-			}
-
 			if (wls_dev->support_fastchg) {
 				wls_status->wls_type = OPLUS_CHG_WLS_VOOC;
 			} else {
@@ -4968,10 +4959,8 @@ static int oplus_chg_wls_rx_handle_state_default(struct oplus_chg_wls *wls_dev)
 		case WLS_ADAPTER_TYPE_SVOOC:
 		case WLS_ADAPTER_TYPE_PD_65W:
 			rc = oplus_chg_wls_get_third_adapter_v_id(wls_dev);
-			if (rc < 0) {
-				wls_status->wls_type = OPLUS_CHG_WLS_BPP;
+			if (rc < 0)
 				goto out;
-			}
 
 			if (wls_dev->support_fastchg) {
 				if (wls_status->adapter_type == WLS_ADAPTER_TYPE_SVOOC)
@@ -5246,10 +5235,8 @@ static int oplus_chg_wls_rx_handle_state_bpp(struct oplus_chg_wls *wls_dev)
 		break;
 	case WLS_ADAPTER_TYPE_VOOC:
 		rc = oplus_chg_wls_get_third_adapter_v_id(wls_dev);
-		if (rc < 0) {
-			wls_status->wls_type = OPLUS_CHG_WLS_BPP;
+		if (rc < 0)
 			goto out;
-		}
 
 		if (wls_dev->support_fastchg) {
 			wls_status->wls_type = OPLUS_CHG_WLS_VOOC;
@@ -5266,10 +5253,8 @@ static int oplus_chg_wls_rx_handle_state_bpp(struct oplus_chg_wls *wls_dev)
 	case WLS_ADAPTER_TYPE_SVOOC:
 	case WLS_ADAPTER_TYPE_PD_65W:
 		rc = oplus_chg_wls_get_third_adapter_v_id(wls_dev);
-		if (rc < 0) {
-			wls_status->wls_type = OPLUS_CHG_WLS_BPP;
+		if (rc < 0)
 			goto out;
-		}
 
 		if (wls_dev->support_fastchg) {
 			if (wls_status->adapter_type == WLS_ADAPTER_TYPE_SVOOC)
@@ -6904,7 +6889,7 @@ static void oplus_chg_wls_trx_sm(struct work_struct *work)
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct oplus_chg_wls *wls_dev = container_of(dwork, struct oplus_chg_wls, wls_trx_sm_work);
 	struct oplus_chg_wls_status *wls_status = &wls_dev->wls_status;
-	char *trx_crux_info = NULL;
+	char trx_crux_info[OPLUS_CHG_TRACK_CURX_INFO_LEN] = {0};
 	u8 trx_status, trx_err;
 	static int err_count;
 	static bool pre_trx_online = false;
@@ -7017,17 +7002,11 @@ static void oplus_chg_wls_trx_sm(struct work_struct *work)
 			wls_status->trx_usb_present_once);
 		if (wls_status->trx_transfer_end_time - wls_status->trx_transfer_start_time >
 		    WLS_TRX_INFO_UPLOAD_THD_2MINS) {
-			trx_crux_info = (char*)kmalloc(OPLUS_CHG_TRACK_CURX_INFO_LEN, GFP_KERNEL);
-			if (trx_crux_info != NULL) {
-				oplus_chg_wls_update_track_info(
-					wls_dev, trx_crux_info, false);
-				oplus_chg_wls_track_upload_trx_general_info(
-					wls_dev, trx_crux_info,
-					wls_status->trx_usb_present_once);
-				kfree(trx_crux_info);
-			} else {
-				chg_err("%s: trx_crux_info kmalloc fail!\n", __func__);
-			}
+			oplus_chg_wls_update_track_info(
+				wls_dev, trx_crux_info, false);
+			oplus_chg_wls_track_upload_trx_general_info(
+				wls_dev, trx_crux_info,
+				wls_status->trx_usb_present_once);
 		}
 		wls_status->trx_usb_present_once = false;
 	} else if (!pre_trx_online && wls_status->trx_online) {
@@ -7602,11 +7581,7 @@ static ssize_t oplus_chg_wls_dev_write(struct file *filp, const char __user *buf
 
 static const struct file_operations oplus_chg_wls_dev_fops = {
 	.owner			= THIS_MODULE,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-	.llseek			= noop_llseek,
-#else
 	.llseek			= no_llseek,
-#endif
 	.write			= oplus_chg_wls_dev_write,
 	.read			= oplus_chg_wls_dev_read,
 	.open			= oplus_chg_wls_dev_open,
@@ -8658,7 +8633,7 @@ static const struct proc_ops oplus_chg_wls_proc_deviated_ops = {
 	.proc_read = oplus_chg_wls_proc_deviated_read,
 	.proc_write = NULL,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_tx_read(struct file *file, char __user *buf,
@@ -8754,7 +8729,7 @@ static const struct proc_ops oplus_chg_wls_proc_tx_ops = {
 	.proc_read = oplus_chg_wls_proc_tx_read,
 	.proc_write = oplus_chg_wls_proc_tx_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_rx_read(struct file *file, char __user *buf,
@@ -8814,7 +8789,7 @@ static const struct proc_ops oplus_chg_wls_proc_rx_ops = {
 	.proc_read = oplus_chg_wls_proc_rx_read,
 	.proc_write = oplus_chg_wls_proc_rx_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_user_sleep_mode_read(struct file *file,
@@ -8907,7 +8882,7 @@ static const struct proc_ops oplus_chg_wls_proc_user_sleep_mode_ops = {
 	.proc_read = oplus_chg_wls_proc_user_sleep_mode_read,
 	.proc_write = oplus_chg_wls_proc_user_sleep_mode_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_idt_adc_test_read(struct file *file,
@@ -8981,7 +8956,7 @@ static const struct proc_ops oplus_chg_wls_proc_idt_adc_test_ops = {
 	.proc_read = oplus_chg_wls_proc_idt_adc_test_read,
 	.proc_write = oplus_chg_wls_proc_idt_adc_test_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_rx_power_read(struct file *file,
@@ -9020,7 +8995,7 @@ static const struct proc_ops oplus_chg_wls_proc_rx_power_ops = {
 	.proc_read = oplus_chg_wls_proc_rx_power_read,
 	.proc_write = oplus_chg_wls_proc_rx_power_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_tx_power_read(struct file *file,
@@ -9059,7 +9034,7 @@ static const struct proc_ops oplus_chg_wls_proc_tx_power_ops = {
 	.proc_read = oplus_chg_wls_proc_tx_power_read,
 	.proc_write = oplus_chg_wls_proc_tx_power_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_rx_version_read(struct file *file,
@@ -9101,7 +9076,7 @@ static const struct proc_ops oplus_chg_wls_proc_rx_version_ops = {
 	.proc_read = oplus_chg_wls_proc_rx_version_read,
 	.proc_write = oplus_chg_wls_proc_rx_version_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_tx_version_read(struct file *file,
@@ -9143,7 +9118,7 @@ static const struct proc_ops oplus_chg_wls_proc_tx_version_ops = {
 	.proc_read = oplus_chg_wls_proc_tx_version_read,
 	.proc_write = oplus_chg_wls_proc_tx_version_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static ssize_t oplus_chg_wls_proc_ftm_mode_read(struct file *file,
@@ -9215,7 +9190,7 @@ static const struct proc_ops oplus_chg_wls_proc_ftm_mode_ops = {
 	.proc_read = oplus_chg_wls_proc_ftm_mode_read,
 	.proc_write = oplus_chg_wls_proc_ftm_mode_write,
 	.proc_open = simple_open,
-	.proc_lseek = noop_llseek,
+	.proc_lseek = seq_lseek,
 };
 
 static int oplus_chg_wls_init_charge_proc(struct oplus_chg_wls *wls_dev)
@@ -9337,7 +9312,7 @@ static void oplus_chg_wls_track_trx_info_load_trigger_work(
 	if (!wls_dev)
 		return;
 
-	oplus_chg_track_upload_trigger_data(&(wls_dev->trx_info_load_trigger));
+	oplus_chg_track_upload_trigger_data(wls_dev->trx_info_load_trigger);
 }
 
 static void oplus_chg_wls_track_rx_err_load_trigger_work(struct work_struct *work)
@@ -9348,7 +9323,7 @@ static void oplus_chg_wls_track_rx_err_load_trigger_work(struct work_struct *wor
 
 	if (!wls_dev->rx_err_load_trigger)
 		return;
-	oplus_chg_track_upload_trigger_data(wls_dev->rx_err_load_trigger);
+	oplus_chg_track_upload_trigger_data(*(wls_dev->rx_err_load_trigger));
 	if (wls_dev->rx_err_load_trigger) {
 		kfree(wls_dev->rx_err_load_trigger);
 		wls_dev->rx_err_load_trigger = NULL;
@@ -9667,11 +9642,7 @@ parse_dt_err:
 	return rc;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-static void oplus_chg_wls_driver_remove(struct platform_device *pdev)
-#else
 static int oplus_chg_wls_driver_remove(struct platform_device *pdev)
-#endif
 {
 	struct oplus_chg_wls *wls_dev = platform_get_drvdata(pdev);
 
@@ -9709,9 +9680,7 @@ static int oplus_chg_wls_driver_remove(struct platform_device *pdev)
 	oplus_chg_unreg_mod_notifier(wls_dev->wls_ocm, &wls_dev->wls_mod_nb);
 	oplus_chg_mod_unregister(wls_dev->wls_ocm);
 	devm_kfree(&pdev->dev, wls_dev);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	return 0;
-#endif
 }
 
 static const struct of_device_id oplus_chg_wls_match[] = {

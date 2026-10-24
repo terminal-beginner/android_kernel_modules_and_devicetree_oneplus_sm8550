@@ -356,7 +356,6 @@ struct uct_mode {
 #define REQUEST_EMARK_LENGTH 0
 
 #define ATTRIBUTE_NOT_SUPPORTED 0
-#define MSG_STATE_WAIT_TIME	20
 /***************************message parse helper**************************/
 #define SWAP64(val)                                                                                                    \
 	((((val)&0xff00000000000000) >> 56) | (((val)&0x00ff000000000000) >> 40) |                                     \
@@ -409,7 +408,6 @@ struct oplus_ufcs_protocol {
 	u8 rcv_buffer[MAX_RCV_BUFFER_SIZE];
 	int msg_send_id;
 	int msg_recv_id;
-	wait_queue_head_t msg_state_wait;
 
 	int get_flag_failed;
 	int handshake_success;

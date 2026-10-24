@@ -879,7 +879,7 @@ static inline void typec_try_src_entry(struct tcpc_device *tcpc)
 
 	rv = tcpci_get_chip_vid(tcpc,&chip_vid);
 	if (!rv && SOUTHCHIP_PD_VID == chip_vid) {
-		tcpc_typec_handle_cc_change(tcpc);
+		tcpc_typec_handle_cc_change(tcpc);	
 	}
 }
 
@@ -946,7 +946,7 @@ static inline void typec_try_snk_entry(struct tcpc_device *tcpc)
 
 	rv = tcpci_get_chip_vid(tcpc,&chip_vid);
 	if (!rv && SOUTHCHIP_PD_VID == chip_vid) {
-		tcpc_typec_handle_cc_change(tcpc);
+		tcpc_typec_handle_cc_change(tcpc);	
 	}
 }
 
@@ -1609,10 +1609,8 @@ static inline void typec_attach_wait_entry(struct tcpc_device *tcpc)
 	if (tcpc->typec_attach_old == TYPEC_ATTACHED_SNK ||
 	    tcpc->typec_attach_old == TYPEC_ATTACHED_DBGACC_SNK) {
 #if IS_ENABLED(CONFIG_USB_POWER_DELIVERY)
-		if (pd_port->pe_data.pd_connected && pd_check_rev30(pd_port)) {
-			tcpc->typec_remote_rp_level = typec_get_cc_res();
-			pd_put_sink_tx_event(tcpc, tcpc->typec_remote_rp_level);
-		}
+		if (pd_port->pe_data.pd_connected && pd_check_rev30(pd_port))
+			pd_put_sink_tx_event(tcpc, typec_get_cc_res());
 #endif	/* CONFIG_USB_POWER_DELIVERY */
 		tcpc_enable_timer(tcpc, TYPEC_TIMER_PDDEBOUNCE);
 		TYPEC_DBG("RpLvl Alert\n");
@@ -1677,7 +1675,7 @@ static inline void typec_attach_wait_entry(struct tcpc_device *tcpc)
 	if (as_sink) {
  		TYPEC_NEW_STATE(typec_attachwait_snk);
 		if(!rv && SOUTHCHIP_PD_VID == chip_vid) {
-			tcpci_set_cc(tcpc,TYPEC_CC_RD);
+			tcpci_set_cc(tcpc,TYPEC_CC_RD);		
 		}
 	} else {
 		/* Advertise Rp level before Attached.SRC Ellisys 3.1.6359 */
@@ -2363,19 +2361,12 @@ int tcpc_typec_handle_timeout(struct tcpc_device *tcpc, uint32_t timer_id)
 
 #ifdef CONFIG_TYPEC_CHECK_LEGACY_CABLE
 	if (timer_id == TYPEC_TIMER_DRP_SRC_TOGGLE &&
-		(tcpc->typec_state != typec_unattached_src) &&
+		(tcpc->typec_state != typec_unattached_src) && 
 				!(!rv && SOUTHCHIP_PD_VID == chip_vid)) {
 		TCPC_DBG("Dummy SRC_TOGGLE\n");
 		return 0;
 	}
 #endif /* CONFIG_TYPEC_CHECK_LEGACY_CABLE */
-
-	if (timer_id == TYPEC_TIMER_DRP_SRC_TOGGLE
-			&& (!rv && SOUTHCHIP_PD_VID == chip_vid)
-			&& (tcpc->typec_state != typec_unattached_snk)) {
-		TCPC_DBG("Dummy SINK_TOGGLE\n");
-		return 0;
-	}
 
 	if (timer_id >= TYPEC_TIMER_START_ID)
 		tcpc_reset_typec_debounce_timer(tcpc);
@@ -2588,9 +2579,10 @@ static inline int typec_handle_vbus_absent(struct tcpc_device *tcpc)
 	ret = tcpci_get_cc(tcpc);
 	if (ret < 0)
 		return ret;
-
-	if (!typec_is_cc_no_res() && tcpc->typec_state <= typec_unattached_src)
+	
+	if (!typec_is_cc_no_res()) {
 		tcpc_typec_handle_cc_change(tcpc);
+	}
 
 	return 0;
 }
@@ -2923,11 +2915,6 @@ int tcpc_typec_init(struct tcpc_device *tcpc, uint8_t typec_role)
 #endif	/* CONFIG_TYPEC_POWER_CTRL_INIT */
 
 	typec_unattached_entry(tcpc);
-
-#ifdef OPLUS_FEATURE_CHG_BASIC
-	/* oplus add for cc toggle */
-	tcpci_notify_wd0_state(tcpc, false);
-#endif
 	return ret;
 }
 

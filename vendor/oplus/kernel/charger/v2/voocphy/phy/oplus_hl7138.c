@@ -448,54 +448,10 @@ static int hl7138_set_chg_enable(struct oplus_voocphy_manager *chip, bool enable
 	if (enable) {
 		hl7138_write_byte(chip->client, HL7138_REG_13,
 				  HL7138_IBUS_UCP_DEB_100ms << HL7138_IBUS_UCP_DEB_SHIFT); /* UCP debounce time 100ms */
-		return hl7138_update_bits(chip->client, HL7138_REG_12, HL7138_CHG_EN_MASK, HL7138_CHG_EN);  /* is not pdsvooc adapter: enable ucp */
+		return hl7138_write_byte(chip->client, HL7138_REG_12, HL7138_CHG_EN | HL7138_IBUS_UCP_EN | HL7138_IBUS_UCP_DEFAULT);  /* is not pdsvooc adapter: enable ucp */
 	} else {
 		return hl7138_write_byte(chip->client, HL7138_REG_12, HL7138_CHG_DIS | HL7138_IBUS_UCP_EN | HL7138_IBUS_UCP_DEFAULT);      /* chg disable */
 	}
-}
-
-static int hl7138_voocphy_set_sstimeout_ucp_enable(struct oplus_voocphy_manager *chip, bool enable)
-{
-	int ret;
-	u8 reg;
-
-	if (!chip) {
-		chg_err("chip is null\n");
-		return -EINVAL;
-	}
-	if (!chip->fcl_support)
-		return -EINVAL;
-
-	ret = hl7138_read_byte(chip->client, HL7138_REG_12, &reg);
-	if ((enable && (reg & HL7138_IBUS_UCP_DIS_MASK)) || (!enable && !(reg & HL7138_IBUS_UCP_DIS_MASK)))
-		return -ENODEV;
-	if (enable) {
-		ret = hl7138_update_bits(chip->client, HL7138_REG_12,
-			HL7138_IBUS_UCP_DIS_MASK, HL7138_IBUS_UCP_ENABLE << HL7138_IBUS_UCP_DIS_SHIFT);
-	} else {
-		ret = hl7138_update_bits(chip->client, HL7138_REG_12,
-			HL7138_IBUS_UCP_DIS_MASK, HL7138_IBUS_UCP_DISABLE << HL7138_IBUS_UCP_DIS_SHIFT);
-	}
-
-	return ret;
-}
-
-static int hl7138_cp_set_sstimeout_ucp_enable(struct oplus_chg_ic_dev *ic_dev, bool enable)
-{
-	struct hl7138_device *chip;
-	int ret;
-
-	if (ic_dev == NULL) {
-		chg_err("oplus_chg_ic_dev is NULL\n");
-		return -ENODEV;
-	}
-	chip = oplus_chg_ic_get_priv_data(ic_dev);
-
-	chg_info("%s %s\n", chip->dev->of_node->name, enable ? "enable" : "disable");
-
-	ret = hl7138_voocphy_set_sstimeout_ucp_enable(chip->voocphy, enable);
-
-	return 0;
 }
 
 static int hl7138_get_cp_ichg(struct oplus_voocphy_manager *chip)
@@ -689,7 +645,7 @@ int hl7138_reset_voocphy(struct oplus_voocphy_manager *chip)
 	hl7138_write_byte(chip->client, HL7138_REG_10, 0xEC);	/* JL:Dis IIN_REG; */
 
 	/* turn off mos */
-	hl7138_write_byte(chip->client, HL7138_REG_12, 0x05);	/* JL:Fsw=500KHz;07->12; enable ucp*/
+	hl7138_write_byte(chip->client, HL7138_REG_12, 0x05);	/* JL:Fsw=500KHz;07->12; */
 	/* set 100ms ucp debounce time; */
 	hl7138_write_byte(chip->client, HL7138_REG_13, 0x40);
 
@@ -896,7 +852,7 @@ static int hl7138_svooc_hw_setting(struct oplus_voocphy_manager *chip)
 	hl7138_write_byte(chip->client, HL7138_REG_16, 0x2C);	/* JL:OV=500, UV=250 */
 
 	hl7138_write_byte(chip->client, HL7138_REG_3F, 0x91);	/* Loose_det=1,JL:33-3F; */
-	hl7138_voocphy_set_sstimeout_ucp_enable(chip, false);
+
 	return 0;
 }
 
@@ -908,13 +864,13 @@ static int hl7138_vooc_hw_setting(struct oplus_voocphy_manager *chip)
 	hl7138_write_byte(chip->client, HL7138_REG_0B, 0x88);	/* VBUS_OVP=12V */
 	hl7138_write_byte(chip->client, HL7138_REG_0C, 0x0F);	/* VIN_OVP:5.85v,,JL:04-0C; */
 
-	hl7138_write_byte(chip->client, HL7138_REG_0E, 0x2F);   /* IBUS_OCP:3.55A, 47*50+1000+200=3550mA */
+	hl7138_write_byte(chip->client, HL7138_REG_0E, 0x1A);	/* IBUS_OCP:4.6A,(16+9)*0.1+0.1+2=4.6A; */
 
 	hl7138_write_byte(chip->client, HL7138_REG_14, 0x02);	/* WD:1000ms,JL:09-14; */
 	hl7138_write_byte(chip->client, HL7138_REG_15, 0x80);	/* JL:bp mode; */
 	hl7138_write_byte(chip->client, HL7138_REG_16, 0x2C);	/* JL:OV=500, UV=250 */
 	hl7138_write_byte(chip->client, HL7138_REG_3F, 0x91);	/* Loose_det=1,JL:33-3F; */
-	hl7138_voocphy_set_sstimeout_ucp_enable(chip, false);
+
 	return 0;
 }
 
@@ -1115,7 +1071,6 @@ struct oplus_voocphy_operations oplus_hl7138_ops = {
 	.clear_interrupts	= hl7138_clear_interrupts,
 	.get_chip_id		= hl7138_get_chip_id,
 	.check_cp_int_happened 	= hl7138_check_cp_int_happened,
-	.set_sstimeout_ucp_enable	= hl7138_voocphy_set_sstimeout_ucp_enable,
 };
 
 static int hl7138_charger_choose(struct oplus_voocphy_manager *chip)
@@ -1677,9 +1632,6 @@ static void *hl7138_cp_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_chg_
 		break;
 	case OPLUS_IC_FUNC_CP_GET_WORK_STATUS:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_CP_GET_WORK_STATUS, hl7138_cp_get_work_status);
-		break;
-	case OPLUS_IC_FUNC_CP_SET_SSTIMEOUT_UCP_ENABLE:
-		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_CP_SET_SSTIMEOUT_UCP_ENABLE, hl7138_cp_set_sstimeout_ucp_enable);
 		break;
 	case OPLUS_IC_FUNC_CP_SET_ADC_ENABLE:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_CP_SET_ADC_ENABLE, hl7138_cp_adc_enable);

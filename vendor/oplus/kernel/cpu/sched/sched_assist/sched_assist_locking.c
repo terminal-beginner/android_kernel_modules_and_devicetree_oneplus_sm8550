@@ -383,20 +383,21 @@ static void update_locking_time(unsigned long time, bool in_cs)
 		goto set;
 	}
 
+	if (locking_depth_skip(ots->locking_depth)) {
+		/*
+		 * If locking_depth record err, we should not
+		 * protect the thread which maybe in unlock state.
+		 */
+		ots->locking_start_time = 0;
+		return;
+	}
+
 	/*
 	 * Current has acquired the lock, increase it's locking depth.
 	 * The depth over one means current hold more than one lock.
 	 */
 	if (time > 0) {
 		ots->locking_depth++;
-		if (locking_depth_skip(ots->locking_depth)) {
-			/*
-			* If locking_depth record err, we should not
-			* protect the thread which maybe in unlock state.
-			*/
-			ots->locking_start_time = 0;
-			return;
-		}
 		goto set;
 	}
 

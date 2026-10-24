@@ -11,8 +11,6 @@
 #include <linux/delay.h>
 #include <linux/sched/clock.h>
 #include <linux/of_platform.h>
-#include <linux/jiffies.h>
-
 #include <oplus_chg_module.h>
 #include <oplus_chg_ic.h>
 #include <oplus_mms.h>
@@ -45,20 +43,15 @@
 #define BATT_BAL_UPDATE_INTERVAL(time) msecs_to_jiffies(time)
 #define BATT_BAL_ENTER_LPH_DISCHG_VBATT 3600
 #define BATT_BAL_EXIT_LPH_DISCHG_VBATT 3700
-#define BATT_BAL_LPH_DISCHG_SWITCH_COUNT 2
+#define BATT_BAL_LPH_DISCHG_SWITCH_COUNT 3
 #define BATT_BAL_CURR_BELOW_COUNT 1
-#define BATT_BAL_FAST_CURR_BELOW_COUNT 1
-
-/* The num of temp region max suppoerted */
-#define BATT_BAL_MAX_TEMP_COUNT_DFT 7
-
 #define SERIES_FORM	1
 #define BATT_BAL_FIX_CURR_MA(x) (x % 500 ? ((x /500 + 1) * 500) : x)
 #define BATT_BAL_LIMIT_CURR_MA(x) ((x /500 - 1) * 500)
 #define BATT_BAL_VOL_ERR_MV					1000
 #define BATT_BAL_TEMP_ERR_DEC					(-400)
 #define BATT_BAL_ABNORMAL_STATE_COUNT		2
-#define BATT_BAL_STATUS_RECORD_LEN			500
+#define BATT_BAL_STATUS_RECORD_LEN			160
 
 #define OPLUS_CHG_GET_SUB_CURRENT          _IOWR('M', 1, char[256])
 #define OPLUS_CHG_GET_SUB_VOLTAGE          _IOWR('M', 2, char[256])
@@ -75,10 +68,6 @@ enum batt_temp_region {
 	BATT_TEMP_REGION_T4,
 	BATT_TEMP_REGION_T5,
 	BATT_TEMP_REGION_T6,
-	BATT_TEMP_REGION_T7,
-	BATT_TEMP_REGION_T8,
-	BATT_TEMP_REGION_T9,
-	BATT_TEMP_REGION_T10,
 	BATT_TEMP_REGION_MAX,
 };
 
@@ -160,9 +149,8 @@ struct oplus_batt_bal_cfg {
 	struct bal_bat_curve_table *b1;
 	struct bal_bat_curve_table *b2;
 
-	uint32_t bal_temp_region_count;
-	int32_t chg_volt_diff_thr[BATT_TEMP_REGION_MAX];
-	int32_t chg_curr_thr[BATT_TEMP_REGION_MAX];
+	int32_t chg_volt_diff_thr[BATT_TEMP_REGION_MAX - 1];
+	int32_t chg_curr_thr[BATT_TEMP_REGION_MAX - 1];
 	int32_t vout_thr[CTRL_REGION_MAX];
 	int32_t curr_over_thr[CTRL_REGION_MAX];
 	int32_t curr_below_thr[CTRL_REGION_MAX];
@@ -202,7 +190,6 @@ struct oplus_batt_bal_chip {
 	struct work_struct err_handler_work;
 	struct work_struct update_run_interval_work;
 	struct work_struct update_bal_state_work;
-	struct work_struct bal_track_work;
 
 	struct oplus_mms *gauge_topic;
 	struct oplus_mms *main_gauge_topic;
@@ -224,7 +211,6 @@ struct oplus_batt_bal_chip {
 	struct mms_subscribe *ufcs_subs;
 	struct mms_subscribe *wls_subs;
 	struct mms_subscribe *pps_subs;
-	struct mms_subscribe *bal_subs;
 
 	u8 status_record[BATT_BAL_STATUS_RECORD_LEN];
 	int deep_support;
@@ -282,17 +268,12 @@ struct oplus_batt_bal_chip {
 	enum batt_bal_abnormal_state abnormal_state;
 	struct oplus_chg_strategy *b1_inr_strategy;
 	struct oplus_chg_strategy *b2_inr_strategy;
-	int track_err_type;
-	bool full_err_report;
-	bool init_done;
-	struct miscdevice misc_dev;
 #if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
 	struct oplus_cfg debug_cfg;
 #endif
 #ifdef CONFIG_THERMAL
 	struct thermal_zone_device *sub_batt_temp_tzd;
 #endif
-	int alarm_curr_status;
 };
 
 static const char * const oplus_batt_bal_dir_flow_text[] = {
@@ -309,10 +290,6 @@ static const char * const batt_bal_temp_table[] = {
 	[BATT_TEMP_REGION_T4] = "batt_temp_t4",
 	[BATT_TEMP_REGION_T5] = "batt_temp_t5",
 	[BATT_TEMP_REGION_T6] = "batt_temp_t6",
-	[BATT_TEMP_REGION_T7] = "batt_temp_t7",
-	[BATT_TEMP_REGION_T8] = "batt_temp_t8",
-	[BATT_TEMP_REGION_T9] = "batt_temp_t9",
-	[BATT_TEMP_REGION_T10] = "batt_temp_t10",
 };
 
 static const char * const oplus_batt_bal_state_text[] = {
@@ -401,8 +378,7 @@ static ssize_t oplus_chg_read(struct file *fp, char __user *buff, size_t count, 
 {
 	char page[256] = { 0 };
 	int len;
-	struct oplus_batt_bal_chip *chip = container_of(fp->private_data,
-		struct oplus_batt_bal_chip, misc_dev);
+	struct oplus_batt_bal_chip *chip = fp->private_data;
 
 	mutex_lock(&chip->update_batt_info_lock);
 	len = sprintf(page, "sub_current=%d\nsub_voltage=%d\nsub_soc=%d\nsub_temperature=%d\nmain_soc=%d\nbal_curr=%d\n",
@@ -436,8 +412,7 @@ static long oplus_chg_ioctl(struct file *fp, unsigned code, unsigned long value)
 	int b1_temp;
 	int b1_curr;
 	int b1_soc;
-	struct oplus_batt_bal_chip *chip = container_of(fp->private_data,
-		struct oplus_batt_bal_chip, misc_dev);
+	struct oplus_batt_bal_chip *chip = fp->private_data;
 
 	mutex_lock(&chip->update_batt_info_lock);
 	b1_volt = chip->b1_volt;
@@ -476,11 +451,25 @@ static long oplus_chg_ioctl(struct file *fp, unsigned code, unsigned long value)
 
 static int oplus_chg_open(struct inode *ip, struct file *fp)
 {
+	struct oplus_batt_bal_chip *chip;
+
+	chip = oplus_batt_bal_get_chip();
+	if (chip == NULL)
+		return -EINVAL;
+
+	fp->private_data = chip;
+
 	return 0;
 }
 
 static int oplus_chg_release(struct inode *ip, struct file *fp)
 {
+	struct oplus_batt_bal_chip *chip;
+
+	chip = oplus_batt_bal_get_chip();
+	if (chip == NULL)
+		return -EINVAL;
+
 	return 0;
 }
 
@@ -491,6 +480,11 @@ static const struct file_operations oplus_chg_fops = {
 	.unlocked_ioctl = oplus_chg_ioctl,
 	.open = oplus_chg_open,
 	.release = oplus_chg_release,
+};
+
+static struct miscdevice oplus_chg_device = {
+	.name = "oplus_chg",
+	.fops = &oplus_chg_fops,
 };
 
 static int oplus_batt_bal_parse_strategy_dt(struct oplus_batt_bal_chip *chip)
@@ -513,8 +507,7 @@ static int oplus_batt_bal_parse_strategy_dt(struct oplus_batt_bal_chip *chip)
 		} else {
 			chg_info("oplus,bal_b1_strategy_data size is %d\n", rc);
 			cfg->b1_strategy_data_size = rc;
-			/* bal_temp_region + temp_type + anti_thr */
-			if (cfg->b1_strategy_data_size > ((chip->cfg.bal_temp_region_count + 2) * sizeof(u32))) {
+			if (cfg->b1_strategy_data_size > ((BATT_TEMP_REGION_MAX + 1) * sizeof(u32))) {
 				chg_err("oplus,bal_b1_strategy_data size err\n");
 				if (cfg->b1_strategy_data)
 					devm_kfree(chip->dev, cfg->b1_strategy_data);
@@ -533,8 +526,7 @@ static int oplus_batt_bal_parse_strategy_dt(struct oplus_batt_bal_chip *chip)
 		} else {
 			chg_info("oplus,bal_b2_strategy_data size is %d\n", rc);
 			cfg->b2_strategy_data_size = rc;
-			/* bal_temp_region + temp_type + anti_thr */
-			if (cfg->b2_strategy_data_size > ((chip->cfg.bal_temp_region_count + 2) * sizeof(u32))) {
+			if (cfg->b2_strategy_data_size > ((BATT_TEMP_REGION_MAX + 1) * sizeof(u32))) {
 				chg_err("oplus,bal_b2_strategy_data size err\n");
 				if (cfg->b2_strategy_data)
 					devm_kfree(chip->dev, cfg->b2_strategy_data);
@@ -546,15 +538,6 @@ static int oplus_batt_bal_parse_strategy_dt(struct oplus_batt_bal_chip *chip)
 	}
 
 	return 0;
-}
-
-static void oplus_bal_track_err_report(struct oplus_batt_bal_chip *chip, int type)
-{
-	if (!chip)
-		return;
-
-	chip->track_err_type = type;
-	schedule_work(&chip->bal_track_work);
 }
 
 static int oplus_batt_bal_parse_curve_dt(struct oplus_batt_bal_chip *chip)
@@ -571,7 +554,7 @@ static int oplus_batt_bal_parse_curve_dt(struct oplus_batt_bal_chip *chip)
 
 	node = chip->dev->of_node;
 	for (k =0; k < 2; k++) {
-		memset(name, 0, sizeof(name));
+		memset(name, 0, sizeof(0));
 		sprintf(name, "b%d_curve_table", k + 1);
 		temp_node = of_get_child_by_name(node, name);
 		if (!temp_node) {
@@ -583,20 +566,13 @@ static int oplus_batt_bal_parse_curve_dt(struct oplus_batt_bal_chip *chip)
 		else
 			batt = &(chip->cfg.b2);
 		*batt = devm_kzalloc(
-				chip->dev, (chip->cfg.bal_temp_region_count + 1) * sizeof(struct bal_bat_curve_table),
-				GFP_KERNEL);
+			chip->dev, BATT_TEMP_REGION_MAX * sizeof(struct bal_bat_curve_table), GFP_KERNEL);
 		if (*batt == NULL) {
 			chg_err("kzalloc error\n");
 			return -ENOMEM;
 		}
 
-		if (chip->cfg.bal_temp_region_count > BATT_TEMP_REGION_MAX) {
-			chg_err("Size not compatible ,bal_temp_region_count:%d, max_batt_bal_temp_table:%d",
-				chip->cfg.bal_temp_region_count, BATT_TEMP_REGION_MAX);
-			return -EINVAL;
-		}
-
-		for (i = 0; i < chip->cfg.bal_temp_region_count; i++) {
+		for (i = 0; i < BATT_TEMP_REGION_MAX; i++) {
 			rc = of_property_count_elems_of_size(temp_node, batt_bal_temp_table[i], sizeof(u32));
 			if (rc > 0 && rc % (sizeof(struct batt_bal_spec)/sizeof(int)) == 0) {
 				length = rc;
@@ -628,7 +604,6 @@ static int oplus_batt_bal_parse_dt(struct oplus_batt_bal_chip *chip)
 	int i;
 	int rc;
 	struct device_node *node = NULL;
-	int temp_region_count;
 
 	if (!chip || !chip->dev) {
 		chg_err("oplus_mos_dev null!\n");
@@ -636,21 +611,6 @@ static int oplus_batt_bal_parse_dt(struct oplus_batt_bal_chip *chip)
 	}
 
 	node = chip->dev->of_node;
-
-	rc = of_property_read_u32(node, "oplus,bal-temp-region-count", &chip->cfg.bal_temp_region_count);
-	if (rc) {
-		chip->cfg.bal_temp_region_count = BATT_BAL_MAX_TEMP_COUNT_DFT;
-		chg_info("use default temp region count: %d\n", chip->cfg.bal_temp_region_count);
-	} else {
-		if (chip->cfg.bal_temp_region_count > BATT_TEMP_REGION_MAX) {
-			chip->cfg.bal_temp_region_count = BATT_TEMP_REGION_MAX;
-			chg_err("bal_temp_region_count %d > max limit %d",
-				chip->cfg.bal_temp_region_count, BATT_TEMP_REGION_MAX);
-		}
-		chg_info("set temp region count as %d\n", chip->cfg.bal_temp_region_count);
-	}
-
-	temp_region_count = chip->cfg.bal_temp_region_count;
 	rc = of_property_read_u32(node, "oplus,bal-dischg-volt-diff-thr", &chip->cfg.dischg_volt_diff_thr);
 	if (rc)
 		chip->cfg.dischg_volt_diff_thr = 2000;
@@ -694,18 +654,18 @@ static int oplus_batt_bal_parse_dt(struct oplus_batt_bal_chip *chip)
 		chip->cfg.fastchg_b2_to_b1_max_curr_anti_thr = 500;
 
 	rc = read_signed_data_from_node(node, "oplus,bal-volt-diff-thr",
-					(s32 *)chip->cfg.chg_volt_diff_thr, temp_region_count);
+					(s32 *)chip->cfg.chg_volt_diff_thr, BATT_TEMP_REGION_MAX - 1);
 	if (rc < 0) {
 		chg_err("get oplus,bal-volt-diff-thr, rc=%d\n", rc);
-		for (i = 0;i < temp_region_count; i++)
+		for (i = 0;i < BATT_TEMP_REGION_MAX - 1; i++)
 			chip->cfg.chg_volt_diff_thr[i] = 5;
 	}
 
 	rc = read_signed_data_from_node(node, "oplus,bal-curr-thr",
-					(s32 *)chip->cfg.chg_curr_thr, temp_region_count);
+					(s32 *)chip->cfg.chg_curr_thr, BATT_TEMP_REGION_MAX - 1);
 	if (rc < 0) {
 		chg_err("get oplus,bal-curr-thr, rc=%d\n", rc);
-		for (i = 0; i < temp_region_count; i++)
+		for (i = 0; i < BATT_TEMP_REGION_MAX - 1; i++)
 			chip->cfg.chg_curr_thr[i] = 100;
 	}
 
@@ -1003,70 +963,16 @@ static int oplus_batt_bal_status_record(struct oplus_batt_bal_chip *chip)
 	int pmos_status = oplus_batt_bal_get_pmos_enable(chip);
 	int hw_status = oplus_batt_bal_get_enable(chip);
 
-	index += snprintf(&(chip->status_record[index]), BATT_BAL_STATUS_RECORD_LEN - index,
-		"pmos_status=%d;hw_status=%d;dir_flow=%s;target_iref=%d;",
+	index += sprintf(&(chip->status_record[index]), "pmos_status=%d;hw_status=%d;dir_flow=%s;target_iref=%d;",
 		pmos_status, hw_status, oplus_batt_bal_dir_flow_text[chip->flow_dir], chip->target_iref);
-	index += snprintf(&(chip->status_record[index]), BATT_BAL_STATUS_RECORD_LEN - index,
-		"b1_vol=%d;b2_vol=%d;b1_curr=%d;b2_curr=%d;",
+	index += sprintf(&(chip->status_record[index]), "b1_vol=%d;b2_vol=%d;b1_curr=%d;b2_curr=%d;",
 		chip->b1_volt, chip->b2_volt, chip->b1_curr, chip->b2_curr);
-	index += snprintf(&(chip->status_record[index]), BATT_BAL_STATUS_RECORD_LEN - index,
-		"vbatt_diff=%d;cbatt_diff=%d;state_machine=%d;abnormal_state=%d\n",
-		chip->b2_volt - chip->b1_volt, (chip->b2_curr - chip->b1_curr) / 2,
-		chip->curr_bal_state, chip->abnormal_state);
+	index += sprintf(&(chip->status_record[index]), "vbatt_diff=%d;cbatt_diff=%d\n",
+		chip->b2_volt - chip->b1_volt, (chip->b2_curr - chip->b1_curr) / 2);
 
-	chg_debug("index=%d\n", index);
+	chg_info("index=%d\n", index);
 
 	return index;
-}
-
-#define FULL_VOLT_GAP 50
-#define IREF_CNT_MAX 3
-#define IREF_ACC_ERR 300
-static void oplus_batt_bal_check_track(struct oplus_batt_bal_chip *chip)
-{
-	union mms_msg_data data = { 0 };
-	int temp_region;
-	bool batt_full;
-	static int last_iref;
-	static unsigned long iref_jiffies;
-	static int iref_cnt;
-	static bool iref_err_report;
-	int bal_curr;
-
-	oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_TEMP_REGION, &data, false);
-	temp_region = data.intval;
-	oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_CHG_FULL, &data, false);
-	batt_full = !!data.intval;
-	if (batt_full && (temp_region > TEMP_REGION_COLD) && (temp_region < TEMP_REGION_WARM) &&
-	    !chip->wired_charging_enable && !chip->wls_charging_enable &&
-	    !chip->full_err_report && abs(chip->b2_volt - chip->b1_volt) > FULL_VOLT_GAP) {
-		chip->full_err_report = true;
-		oplus_bal_track_err_report(chip, VOL_GAP_WHEN_FULL);
-	}
-	if (chip->flow_dir == DEFAULT_DIR) {
-		iref_cnt = 0;
-		iref_err_report = false;
-		return;
-	}
-	if (!chip->wired_online && !chip->wls_online)
-		return;
-	bal_curr = abs(chip->b1_curr - chip->b2_curr) / 2;
-	if (last_iref != chip->target_iref) {
-		last_iref = chip->target_iref;
-		iref_jiffies = jiffies + (unsigned long)(5 * HZ);
-		iref_cnt = 0;
-	} else if (abs(chip->target_iref - bal_curr) > IREF_ACC_ERR) {
-		if (iref_cnt < IREF_CNT_MAX) {
-			iref_cnt++;
-		} else if (time_is_before_jiffies(iref_jiffies) && !iref_err_report) {
-			iref_err_report = true;
-			oplus_bal_track_err_report(chip, BAL_CURR_ACC_ERR);
-		}
-	} else {
-		iref_cnt = 0;
-	}
-
-	return;
 }
 
 static int oplus_batt_bal_other(struct oplus_batt_bal_chip *chip)
@@ -1078,8 +984,6 @@ static int oplus_batt_bal_other(struct oplus_batt_bal_chip *chip)
 
 	rc = oplus_batt_bal_reg_dump(chip);
 	oplus_batt_bal_status_record(chip);
-	oplus_batt_bal_check_track(chip);
-
 	return rc;
 }
 
@@ -1091,11 +995,6 @@ static int oplus_batt_bal_cfg(
 
 	if (!chip)
 		return -EINVAL;
-	if (chip->abnormal_state != BATT_BAL_NO_ABNORMAL &&
-	    (pmos_en == true || hw_en == true))
-		return rc;
-
-	oplus_wired_set_supplementary_power_mos(chip->wired_topic, pmos_en);
 
 	mutex_lock(&chip->cfg_lock);
 	if (flow_dir == DEFAULT_DIR) {
@@ -1287,16 +1186,6 @@ static struct mms_item oplus_chg_batt_bal_item[] = {
 			.update = oplus_batt_bal_update_status,
 		}
 	},
-	{
-		.desc = {
-			.item_id = BATT_BAL_ITEM_LCF_ALARM,
-			.str_data = false,
-			.up_thr_enable = false,
-			.down_thr_enable = false,
-			.dead_thr_enable = false,
-			.update = NULL,
-		}
-	}
 };
 
 static const u32 oplus_batt_bal_update_item[] = {
@@ -1317,30 +1206,26 @@ static const struct oplus_mms_desc oplus_mms_batt_bal_desc = {
 static void oplus_batt_bal_check_batt_temp_region(
 	struct oplus_batt_bal_chip *chip)
 {
-	int rc = 0;
-
 	if (!chip)
 		return;
 
-	if (chip->b1_inr_strategy) {
-		rc = oplus_chg_strategy_get_data(
+	if (chip->b1_inr_strategy)
+		oplus_chg_strategy_get_data(
 			chip->b1_inr_strategy, &chip->b1_temp_region);
-		if (rc < 0)
-			chg_err("can't get b1_temp_region, rc=%d\n", rc);
-	}
 
-	if (chip->b2_inr_strategy) {
-		rc = oplus_chg_strategy_get_data(
+	if (chip->b2_inr_strategy)
+		oplus_chg_strategy_get_data(
 			chip->b2_inr_strategy, &chip->b2_temp_region);
-		if (rc < 0)
-			chg_err("can't get b2_temp_region, rc=%d\n", rc);
-	}
 
-	if (chip->b1_temp_region >= chip->cfg.bal_temp_region_count)
-		chip->b1_temp_region = chip->cfg.bal_temp_region_count - 1;
+	if (chip->b1_temp_region > BATT_TEMP_REGION_T5)
+		chip->b1_temp_region =  BATT_TEMP_REGION_T5;
 
-	if (chip->b2_temp_region >= chip->cfg.bal_temp_region_count)
-		chip->b2_temp_region = chip->cfg.bal_temp_region_count - 1;
+	if (chip->b2_temp_region > BATT_TEMP_REGION_T5)
+		chip->b2_temp_region =  BATT_TEMP_REGION_T5;
+
+	chg_info("b1 temp region = %s, b2 temp region = %s\n",
+		batt_bal_temp_table[chip->b1_temp_region],
+		batt_bal_temp_table[chip->b2_temp_region]);
 }
 
 static int oplus_batt_bal_update_batt_info(struct oplus_batt_bal_chip *chip)
@@ -1371,9 +1256,11 @@ static int oplus_batt_bal_update_batt_info(struct oplus_batt_bal_chip *chip)
 	chip->b1_temp = data.intval;
 	oplus_mms_get_item_data(chip->sub_gauge_topic, GAUGE_ITEM_SOC, &data, true);
 	chip->b1_soc = data.intval;
-	oplus_mms_get_item_data(chip->sub_gauge_topic, GAUGE_ITEM_VOL_MIN, &data, true);
 	mutex_unlock(&chip->update_batt_info_lock);
 
+	chg_info("b2 info[%d, %d, %d, %d], b1 info[%d, %d, %d, %d]\n",
+		chip->b2_volt, -chip->b2_curr, chip->b2_temp, chip->b2_soc,
+		chip->b1_volt, -chip->b1_curr, chip->b1_temp, chip->b1_soc);
 	return 0;
 }
 
@@ -1383,7 +1270,7 @@ static void oplus_batt_bal_update_run_interval_work(struct work_struct *work)
 		container_of(work, struct oplus_batt_bal_chip, update_run_interval_work);
 
 	if ((chip->vooc_fastchg_ing && !chip->vooc_by_normal_path) ||
-	     chip->pps_fastchg_ing || chip->ufcs_fastchg_ing || chip->wls_fastchg_ing)
+	     chip->pps_fastchg_ing || chip->wls_fastchg_ing || chip->wls_fastchg_ing)
 		vote(chip->run_interval_update_votable, FASTCHG_VOTER, true, BATT_BAL_TIME_MS(500), false);
 	else
 		vote(chip->run_interval_update_votable, FASTCHG_VOTER, false, 0, false);
@@ -1436,6 +1323,12 @@ static void oplus_batt_bal_update_affect_state_update_args(struct oplus_batt_bal
 		oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_FFC_STATUS, &data, false);
 		chip->ffc_status = data.intval;
 	}
+
+	chg_info("wired_online:%d, wls_online:%d, ffc_status:%d, vooc_fastchg_ing:%d, vooc_by_normal_path:%d, \
+		pps_fastchg_ing:%d, ufcs_fastchg_ing:%d, wls_fastchg_ing:%d, wired_charging_enable:%d, wls_charging_enable:%d, \
+		ic_trig_abnormal:%d\n", chip->wired_online, chip->wls_online, chip->ffc_status, chip->vooc_fastchg_ing,
+		chip->vooc_by_normal_path, chip->pps_fastchg_ing, chip->ufcs_fastchg_ing, chip->wls_fastchg_ing,
+		chip->wired_charging_enable, chip->wls_charging_enable, atomic_read(&chip->ic_trig_abnormal));
 }
 
 static void oplus_batt_bal_state_daemon(struct oplus_batt_bal_chip *chip)
@@ -1467,7 +1360,7 @@ static void oplus_batt_bal_state_daemon(struct oplus_batt_bal_chip *chip)
 	    ((chip->curr_bal_state >= OPLUS_BATT_BAL_STATE_FAST_BAL_START &&
 	    chip->curr_bal_state <= OPLUS_BATT_BAL_STATE_FAST_CC_CHG) &&
 	    target_bal_state == OPLUS_BATT_BAL_STATE_FAST_START)) {
-		chg_debug("continue to maintain current state\n");
+		chg_info("continue to maintain current state\n");
 	} else if (chip->curr_bal_state != target_bal_state) {
 		chip->curr_bal_state = target_bal_state;
 		chg_info("expect target_state=%s, current_state=%s\n",
@@ -1525,75 +1418,6 @@ static void oplus_batt_bal_update_bal_state_work(struct work_struct *work)
 	}
 }
 
-#define TRACK_UPLOAD_COUNT_MAX			10
-#define TRACK_DEVICE_ABNORMAL_UPLOAD_PERIOD	(24 * 3600)
-#define REASON_LENGTH_MAX 256
-static void oplus_batt_bal_track_work(struct work_struct *work)
-{
-	struct oplus_batt_bal_chip *chip =
-		container_of(work, struct oplus_batt_bal_chip, bal_track_work);
-	struct oplus_mms *err_topic;
-	struct mms_msg *msg = NULL;
-	int rc;
-	static int upload_count = 0;
-	static int pre_upload_time = 0;
-	int curr_time;
-	char temp_str[REASON_LENGTH_MAX] = {0};
-	int index = 0;
-
-	err_topic = oplus_mms_get_by_name("error");
-	if (!err_topic) {
-		chg_err("error topic not found\n");
-		return;
-	}
-
-	curr_time = oplus_chg_track_get_local_time_s();
-	if (curr_time - pre_upload_time > TRACK_DEVICE_ABNORMAL_UPLOAD_PERIOD)
-		upload_count = 0;
-	if (chip->track_err_type && upload_count < TRACK_UPLOAD_COUNT_MAX) {
-		upload_count++;
-		pre_upload_time = oplus_chg_track_get_local_time_s();
-		chg_info("batt bal track trigger: %d\n", chip->track_err_type);
-		switch(chip->track_err_type) {
-		case VOL_GAP_BIG_IN_DISCHG:
-			index += scnprintf(&(temp_str[index]), REASON_LENGTH_MAX - index,
-					  "$$reason@@%s$$status@@", "vol_gap_big_in_dischg");
-			break;
-		case BAL_CURR_ACC_ERR:
-			index += scnprintf(&(temp_str[index]), REASON_LENGTH_MAX - index,
-					  "$$reason@@%s$$status@@", "bal_curr_accuracy_err");
-			break;
-		case VOL_GAP_WHEN_FULL:
-			index += scnprintf(&(temp_str[index]), REASON_LENGTH_MAX - index,
-					  "$$reason@@%s$$status@@", "vol_gap_when_full");
-			break;
-		default:
-			break;
-		}
-		index += scnprintf(&(temp_str[index]), REASON_LENGTH_MAX - index,
-				  "flow_dir:%s bal_curr:%d b1_vol:%d b1_curr:%d b1_soc:%d b1_temp:%d "
-				  "b2_vol:%d b2_curr:%d b2_soc:%d b2_temp:%d PMOS:%d bal_en:%d",
-				  oplus_batt_bal_dir_flow_text[chip->flow_dir], chip->target_iref,
-				  chip->b1_volt, chip->b1_curr, chip->b1_soc, chip->b1_temp,
-				  chip->b2_volt, chip->b2_curr, chip->b2_soc, chip->b2_temp,
-				  oplus_batt_bal_get_pmos_enable(chip), oplus_batt_bal_get_enable(chip));
-		msg = oplus_mms_alloc_str_msg(MSG_TYPE_ITEM, MSG_PRIO_MEDIUM, ERR_ITEM_BAL_INFO,
-					      temp_str);
-		if (msg == NULL) {
-			chg_err("alloc batt bal error msg error\n");
-			return;
-		}
-		rc = oplus_mms_publish_msg_sync(err_topic, msg);
-		if (rc < 0) {
-			chg_err("publish batt bal error msg error, rc=%d\n", rc);
-			kfree(msg);
-		}
-		chip->track_err_type = 0;
-	}
-
-	return;
-}
-
 static void oplus_batt_bal_set_curr_limit(
 	struct oplus_batt_bal_chip *chip, int curr_limit)
 {
@@ -1620,35 +1444,13 @@ static void oplus_batt_bal_set_curr_limit(
 	chg_info("curr_limit = %d\n", chip->curr_over.curr_limit);
 }
 
-static int oplus_batt_bal_set_fcc(int fcc_curr, bool enable)
-{
-	struct votable *wired_fcc_votable;
-	int rc;
-
-	wired_fcc_votable = find_votable("WIRED_FCC");
-	if (!wired_fcc_votable) {
-		chg_err("WIRED_FCC votable not found\n");
-		return -EINVAL;
-	}
-
-	rc = vote(wired_fcc_votable, CURR_LIMIT_VOTER, enable, fcc_curr, true);
-	if (rc < 0)
-		chg_err("vote fcc = %d rc = %d\n", fcc_curr, rc);
-
-	return rc;
-}
 
 static void oplus_batt_bal_set_curr_over(
-	struct oplus_batt_bal_chip *chip, bool trigger, int level_1, int level_2,
-	enum batt_temp_region region_b1, enum batt_temp_region region_b2)
+	struct oplus_batt_bal_chip *chip, bool trigger)
 {
 	int curr_limit;
 	static int b1_limit_curr;
 	static int b2_limit_curr;
-	static int b1_level;
-	static int b2_level;
-	static enum batt_temp_region b1_region;
-	static enum batt_temp_region b2_region;
 
 	if (trigger) {
 		if (time_is_before_jiffies(chip->curr_over.not_allow_limit_jiffies)) {
@@ -1656,27 +1458,16 @@ static void oplus_batt_bal_set_curr_over(
 			curr_limit = (chip->b1_curr + chip->b2_curr) / 2;
 			curr_limit = BATT_BAL_LIMIT_CURR_MA(curr_limit);
 
-			if (curr_limit <= BATT_BAL_CURR_MA(500))
-				curr_limit = BATT_BAL_CURR_MA(500);
-			if (chip->vooc_fastchg_ing || chip->pps_fastchg_ing ||
-			    chip->ufcs_fastchg_ing || chip->wls_fastchg_ing)
-				oplus_batt_bal_set_curr_limit(chip, curr_limit);
-			else
-				oplus_batt_bal_set_fcc(curr_limit * 2, true);
+			if (curr_limit <= BATT_BAL_CURR_MA(2000))
+				curr_limit = BATT_BAL_CURR_MA(2000);
+			oplus_batt_bal_set_curr_limit(chip, curr_limit);
 			b1_limit_curr = chip->curr_over.b1_limit_curr;
 			b2_limit_curr = chip->curr_over.b2_limit_curr;
-			b1_level = level_1;
-			b2_level = level_2;
-			b1_region = region_b1;
-			b2_region = region_b2;
 		}
 	} else {
-		/* temp region change or level up, need reset curr over spec check */
-		if (b1_level < level_1 || b2_level < level_2 ||
-		    b1_region != region_b1 || b2_region != region_b2) {
+		if (chip->curr_over.b2_limit_curr > b2_limit_curr ||
+		    chip->curr_over.b1_limit_curr > b1_limit_curr)
 			oplus_batt_bal_set_curr_limit(chip, 0);
-			oplus_batt_bal_set_fcc(0, false);
-		}
 		b1_limit_curr = chip->curr_over.b1_limit_curr;
 		b2_limit_curr = chip->curr_over.b2_limit_curr;
 		chip->curr_over.not_allow_limit_jiffies = jiffies;
@@ -1714,8 +1505,6 @@ static bool oplus_batt_bal_check_batt_curr_over(struct oplus_batt_bal_chip *chip
 	bool curr_over;
 	int b1_curr = chip->b1_curr;
 	int b2_curr = chip->b2_curr;
-	int level_1 = 0;
-	int level_2 = 0;
 
 	if (!chip->wired_online && !chip->wls_online) {
 		chip->curr_over.b1_over = false;
@@ -1741,13 +1530,10 @@ static bool oplus_batt_bal_check_batt_curr_over(struct oplus_batt_bal_chip *chip
 		else
 			chip->curr_over.b1_over = false;
 		chip->curr_over.b1_limit_curr = chip->cfg.b1[chip->b1_temp_region].curve_table[i].curr;
-		level_1 = i;
 		break;
 	}
-	if (i == chip->cfg.b1[chip->b1_temp_region].length) {
+	if (i == chip->cfg.b1[chip->b1_temp_region].length)
 		chip->curr_over.b1_limit_curr = chip->cfg.b1[chip->b1_temp_region].curve_table[0].curr;
-		level_1 = 0;
-	}
 
 	for (i = 0; i < chip->cfg.b2[chip->b2_temp_region].length; i++) {
 		if (chip->b2_volt > chip->cfg.b2[chip->b2_temp_region].curve_table[i].volt)
@@ -1758,16 +1544,19 @@ static bool oplus_batt_bal_check_batt_curr_over(struct oplus_batt_bal_chip *chip
 		else
 			chip->curr_over.b2_over = false;
 		chip->curr_over.b2_limit_curr = chip->cfg.b2[chip->b2_temp_region].curve_table[i].curr;
-		level_2 = i;
 		break;
 	}
-	if (i == chip->cfg.b2[chip->b2_temp_region].length) {
+	if (i == chip->cfg.b2[chip->b2_temp_region].length)
 		chip->curr_over.b2_limit_curr = chip->cfg.b2[chip->b2_temp_region].curve_table[0].curr;
-		level_2 = 0;
-	}
 
 	curr_over = (chip->curr_over.b1_over || chip->curr_over.b2_over);
-	oplus_batt_bal_set_curr_over(chip, curr_over, level_1, level_2, chip->b1_temp_region, chip->b2_temp_region);
+	if (chip->vooc_fastchg_ing ||chip->pps_fastchg_ing ||
+	    chip->ufcs_fastchg_ing || chip->wls_fastchg_ing)
+		oplus_batt_bal_set_curr_over(chip, curr_over);
+
+	chg_info("curr_over=[%d, %d, %d], curr_limit=[%d, %d]\n",
+		curr_over, chip->curr_over.b1_over, chip->curr_over.b2_over,
+		chip->curr_over.b1_limit_curr, chip->curr_over.b2_limit_curr);
 
 	return curr_over;
 }
@@ -1830,7 +1619,7 @@ static bool oplus_batt_bal_switch_to_lph_dischg(
 			lph_dischg_vbatt_min = term_voltage + 300; /* todo switch volt set to term_voltage + 300mv */
 	}
 
-	chg_debug("lph_dischg_vbatt_min=%d\n", lph_dischg_vbatt_min);
+	chg_info("lph_dischg_vbatt_min=%d\n", lph_dischg_vbatt_min);
 	if (!atomic_read(&chip->ic_trig_abnormal) && (abs(chip->b2_volt - chip->b1_volt) > volt_diff_thr) &&
 	   (chip->b2_volt < lph_dischg_vbatt_min || chip->b1_volt < lph_dischg_vbatt_min)) {
 		chip->lph_dischg_switch_count++;
@@ -1906,12 +1695,10 @@ static int oplus_batt_bal_handle_state_dischg(
 			chip->sub_step_state = BAL_SUB_STATE_B1_TO_B2;
 		 	chip->eq_volt_diff_thr -= chip->cfg.dischg_volt_diff_anti_thr;
 			oplus_batt_bal_cfg(chip, false, true, B1_TO_B2, curr_thr, vout);
-			oplus_bal_track_err_report(chip, VOL_GAP_BIG_IN_DISCHG);
 		} else {
 			chip->sub_step_state = BAL_SUB_STATE_B2_TO_B1;
 		 	chip->eq_volt_diff_thr -= chip->cfg.dischg_volt_diff_anti_thr;
 			oplus_batt_bal_cfg(chip, false, true, B2_TO_B1, curr_thr, vout);
-			oplus_bal_track_err_report(chip, VOL_GAP_BIG_IN_DISCHG);
 		}
 		break;
 	case BAL_SUB_STATE_B1_TO_B2:
@@ -1920,13 +1707,12 @@ static int oplus_batt_bal_handle_state_dischg(
 			oplus_batt_bal_cfg(chip, false, true, B1_TO_B2, curr_thr, vout);
 		} else if (abs(chip->b2_volt - chip->b1_volt) <=  chip->eq_volt_diff_thr) {
 			chip->sub_step_state = BAL_SUB_STATE_BAL;
-			chip->eq_volt_diff_thr += chip->cfg.dischg_volt_diff_anti_thr;
+			 chip->eq_volt_diff_thr += chip->cfg.dischg_volt_diff_anti_thr;
 			oplus_batt_bal_cfg(chip, true, false, DEFAULT_DIR, curr_thr, 0);
 		} else {
 			chip->sub_step_state = BAL_SUB_STATE_B2_TO_B1;
-			chip->eq_volt_diff_thr = chip->cfg.dischg_volt_diff_thr;
+			 chip->eq_volt_diff_thr = chip->cfg.dischg_volt_diff_thr;
 			oplus_batt_bal_cfg(chip, false, true, B2_TO_B1, curr_thr, vout);
-			oplus_bal_track_err_report(chip, VOL_GAP_BIG_IN_DISCHG);
 		}
 		break;
 	case BAL_SUB_STATE_B2_TO_B1:
@@ -1941,7 +1727,6 @@ static int oplus_batt_bal_handle_state_dischg(
 			chip->sub_step_state = BAL_SUB_STATE_B1_TO_B2;
 			chip->eq_volt_diff_thr = chip->cfg.dischg_volt_diff_thr;
 			oplus_batt_bal_cfg(chip, false, true, B1_TO_B2, curr_thr, vout);
-			oplus_bal_track_err_report(chip, VOL_GAP_BIG_IN_DISCHG);
 		}
 		break;
 	default:
@@ -2096,7 +1881,6 @@ static int oplus_batt_bal_entry_state_init(
 	chip->target_iref = chip->eq_curr_thr;
 
 	memset(&(chip->curr_below), 0, sizeof(chip->curr_below));
-	chip->alarm_curr_status = BAL_ALARM_NONE;
 	chg_info("sub_step_state=%d, flow_dir=%d, target_iref=%d, volt_diff_thr=%d, vout=%d\n",
 		chip->sub_step_state, chip->flow_dir, chip->eq_curr_thr, chip->eq_volt_diff_thr, vout);
 
@@ -2166,7 +1950,7 @@ static int oplus_batt_bal_check_ffc_curr_below(
 	int rc = 0;
 
 	if (chip->flow_dir == B1_TO_B2) {
-		if (chip->b1_curr > 0 && (chip->b1_curr <
+		if (chip->b1_curr > 0 && (chip->b1_curr<
 		    chip->cutoff.ffc_sub_curr + chip->cfg.curr_below_thr[CTRL_REGION_FFC_CHG]))
 			chip->curr_below.b1_below_count++;
 		else
@@ -2203,31 +1987,6 @@ static int oplus_batt_bal_check_fast_curr_below(
 	struct oplus_batt_bal_chip * chip)
 {
 	int rc = 0;
-
-	if (chip->flow_dir == B1_TO_B2) {
-		if (chip->alarm_curr_status == BAL_ALARM_B1 ||
-		    chip->alarm_curr_status == BAL_ALARM_B1_AND_B2)
-			chip->curr_below.b1_below_count++;
-		else
-			chip->curr_below.b1_below_count = 0;
-
-		if (chip->curr_below.b1_below_count >= BATT_BAL_FAST_CURR_BELOW_COUNT)
-			chip->curr_below.b1_below = true;
-		else
-			chip->curr_below.b1_below = false;
-	}
-	if (chip->flow_dir == B2_TO_B1) {
-		if (chip->alarm_curr_status == BAL_ALARM_B2 ||
-		    chip->alarm_curr_status == BAL_ALARM_B1_AND_B2)
-			chip->curr_below.b2_below_count++;
-		else
-			chip->curr_below.b2_below_count = 0;
-
-		if (chip->curr_below.b2_below_count >= BATT_BAL_FAST_CURR_BELOW_COUNT)
-			chip->curr_below.b2_below = true;
-		else
-			chip->curr_below.b2_below = false;
-	}
 
 	return rc;
 }
@@ -2489,9 +2248,8 @@ static int oplus_batt_bal_handle_state_fast_cc_chg(
 	rc = oplus_batt_bal_check_curr_below(chip);
 
 	chg_info("sub_step_state:%d, volt_diff_thr:%d, curr_thr:%d, flow_dir:%d, \
-		target_iref:%d, curr_over_thr:%d, vout:%d alarm_curr_bellow[%d %d]\n", chip->sub_step_state,
-		chip->eq_volt_diff_thr, chip->eq_curr_thr, chip->flow_dir, chip->target_iref, curr_over_thr, vout,
-		chip->curr_below.b1_below, chip->curr_below.b2_below);
+		target_iref:%d, curr_over_thr:%d, vout:%d\n", chip->sub_step_state,
+		chip->eq_volt_diff_thr, chip->eq_curr_thr, chip->flow_dir, chip->target_iref, curr_over_thr, vout);
 	switch (chip->sub_step_state) {
 	case BAL_SUB_STATE_B1_TO_B2:
 		if (chip->b1_volt - chip->b2_volt > chip->eq_volt_diff_thr) {
@@ -2562,10 +2320,9 @@ static int oplus_batt_bal_handle_state_fast_cc_chg(
 
 static void oplus_batt_bal_process(struct oplus_batt_bal_chip *chip)
 {
-	if (chip->curr_bal_state != chip->pre_bal_state)
-		chg_info("pre_bal_state=%s, curr_bal_state=%s\n",
-			oplus_batt_bal_get_bal_state_str(chip->pre_bal_state),
-			oplus_batt_bal_get_bal_state_str(chip->curr_bal_state));
+	chg_info("pre_bal_state=%s, curr_bal_state=%s\n",
+		oplus_batt_bal_get_bal_state_str(chip->pre_bal_state),
+		oplus_batt_bal_get_bal_state_str(chip->curr_bal_state));
 
 	switch (chip->curr_bal_state) {
 	case OPLUS_BATT_BAL_STATE_ABNORMAL:
@@ -2597,6 +2354,9 @@ static void oplus_batt_bal_process(struct oplus_batt_bal_chip *chip)
 
 	chip->pre_bal_state = chip->curr_bal_state;
 	mutex_unlock(&chip->state_lock);
+
+	chg_info("pmos_enable=%d, bal_enable=%d\n",
+		oplus_batt_bal_get_pmos_enable(chip), oplus_batt_bal_get_enable(chip));
 }
 
 static int oplus_vooc_fastchg_disable(
@@ -2741,6 +2501,8 @@ static int oplus_batt_bal_check_abnormal_state(
 		}
 	}
 
+	chg_info("abnormal_state :%d, count:%d", chip->abnormal_state, abnormal_count);
+
 	return rc;
 }
 
@@ -2752,8 +2514,8 @@ static void oplus_batt_bal_sm_work(struct work_struct *work)
 		struct oplus_batt_bal_chip, batt_bal_sm_work);
 
 	rc = oplus_batt_bal_update_batt_info(chip);
-	if (rc < 0 || !chip->init_done) {
-		chg_err("update batt info fail or init not completed\n");
+	if (rc < 0) {
+		chg_err("update batt info fail\n");
 		goto try;
 	}
 
@@ -2765,29 +2527,9 @@ static void oplus_batt_bal_sm_work(struct work_struct *work)
 	oplus_batt_bal_other(chip);
 
 try:
-	chg_info("run_interval_update=%d abnormal_state :%d "
-		 "b2 info[%d, %d, %d, %d], b1 info[%d, %d, %d, %d] "
-		 "b1 temp region = %s, b2 temp region = %s "
-		 "curr_over=[%d, %d], curr_limit=[%d, %d] "
-		 "pmos_enable=%d, bal_enable=%d "
-		 "online[%d %d], ffc_status:%d, fastchg_ing[%d %d %d %d], vooc_by_normal_path:%d "
-		 "charging_enable[%d %d], ic_trig_abnormal:%d\n",
-		 chip->run_interval_update, chip->abnormal_state,
-		 chip->b2_volt, -chip->b2_curr, chip->b2_temp, chip->b2_soc,
-		 chip->b1_volt, -chip->b1_curr, chip->b1_temp, chip->b1_soc,
-		 batt_bal_temp_table[chip->b1_temp_region],
-		 batt_bal_temp_table[chip->b2_temp_region],
-		 chip->curr_over.b1_over, chip->curr_over.b2_over,
-		 chip->curr_over.b1_limit_curr, chip->curr_over.b2_limit_curr,
-		 oplus_batt_bal_get_pmos_enable(chip), oplus_batt_bal_get_enable(chip),
-		 chip->wired_online, chip->wls_online, chip->ffc_status,
-		 chip->vooc_fastchg_ing, chip->pps_fastchg_ing, chip->ufcs_fastchg_ing, chip->wls_fastchg_ing,
-		 chip->vooc_by_normal_path, chip->wired_charging_enable, chip->wls_charging_enable,
-		 atomic_read(&chip->ic_trig_abnormal));
-	if (get_effective_client(chip->run_interval_update_votable) &&
-	    strcmp(get_effective_client(chip->run_interval_update_votable), DEF_VOTER))
-		schedule_delayed_work(&chip->batt_bal_sm_work,
-			BATT_BAL_UPDATE_INTERVAL(chip->run_interval_update));
+	chg_info("run_interval_update=%d\n", chip->run_interval_update);
+	schedule_delayed_work(&chip->batt_bal_sm_work,
+		BATT_BAL_UPDATE_INTERVAL(chip->run_interval_update));
 }
 
 static void oplus_batt_bal_ic_trig_abnormal_clear_work(
@@ -2805,10 +2547,7 @@ static void oplus_batt_bal_online_init_work(struct work_struct *work)
 	struct oplus_batt_bal_chip *chip = container_of(work, struct oplus_batt_bal_chip,
 		batt_bal_online_init_work);
 
-	chip->alarm_curr_status = BAL_ALARM_NONE;
 	oplus_batt_bal_pmos_disable(chip->batt_bal_topic);
-	oplus_wired_set_supplementary_power_mos(chip->wired_topic, false);
-
 	oplus_batt_bal_set_curr_limit(chip, 0);
 	oplus_batt_bal_ic_trig_abnormal_clear_work(&(chip->ic_trig_abnormal_clear_work.work));
 }
@@ -2819,7 +2558,6 @@ static void oplus_batt_bal_charging_init_work(struct work_struct *work)
 		batt_bal_charging_init_work);
 
 	oplus_batt_bal_pmos_disable(chip->batt_bal_topic);
-	oplus_wired_set_supplementary_power_mos(chip->wired_topic, false);
 }
 
 static void oplus_batt_bal_disable_bal_work(struct work_struct *work)
@@ -2934,10 +2672,7 @@ static void oplus_batt_bal_wired_subs_callback(struct mms_subscribe *subs,
 				chip->wired_online = data.intval;
 				if (chip->wired_online)
 					queue_work(system_highpri_wq, &chip->batt_bal_online_init_work);
-				else
-					oplus_batt_bal_set_fcc(0, false);
 				schedule_work(&chip->update_bal_state_work);
-				chip->full_err_report = false;
 			}
 			chg_info("wired_online:%d\n", chip->wired_online);
 			break;
@@ -2983,10 +2718,8 @@ static void oplus_batt_bal_subscribe_wired_topic(struct oplus_mms *topic,
 
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_ONLINE, &data, true);
 	chip->wired_online = !!data.intval;
-	if (chip->wired_online) {
+	if (chip->wired_online)
 		oplus_batt_bal_set_pmos_enable(chip, false);
-		oplus_wired_set_supplementary_power_mos(chip->wired_topic, false);
-	}
 	chg_info("wired_online:%d\n", chip->wired_online);
 
 	if (chip->wired_online || chip->wired_charging_enable) {
@@ -3064,14 +2797,8 @@ static void oplus_batt_bal_subscribe_vooc_topic(struct oplus_mms *topic,
 static void oplus_batt_bal_gauge_subs_callback(struct mms_subscribe *subs,
 	enum mms_msg_type type, u32 id, bool sync)
 {
-	struct oplus_batt_bal_chip *chip = subs->priv_data;
-
 	switch (type) {
 	case MSG_TYPE_TIMER:
-		if (chip && get_effective_client(chip->run_interval_update_votable) &&
-		    (!strcmp(get_effective_client(chip->run_interval_update_votable), DEF_VOTER) ||
-		    !(work_busy(&chip->batt_bal_sm_work.work))))
-			schedule_delayed_work(&chip->batt_bal_sm_work, 0);
 		break;
 	default:
 		break;
@@ -3116,7 +2843,7 @@ static void oplus_batt_bal_subscribe_main_gauge_topic(struct oplus_mms *topic,
 
 	chip->main_gauge_topic = topic;
 	chip->main_gauge_subs =
-		oplus_mms_subscribe(chip->main_gauge_topic, chip,
+		oplus_mms_subscribe(chip->gauge_topic, chip,
 				    oplus_batt_bal_main_gauge_subs_callback, "batt_bal");
 	if (IS_ERR_OR_NULL(chip->main_gauge_subs)) {
 		chg_err("subscribe gauge topic error, rc=%ld\n",
@@ -3127,7 +2854,7 @@ static void oplus_batt_bal_subscribe_main_gauge_topic(struct oplus_mms *topic,
 	if (chip->b2_inr_strategy)
 		oplus_chg_strategy_init(chip->b2_inr_strategy);
 
-	vote(chip->run_interval_update_votable, DEF_VOTER, true, BATT_BAL_TIME_MS(10000), false);
+	vote(chip->run_interval_update_votable, DEF_VOTER, true, BATT_BAL_TIME_MS(5000), false);
 	mod_delayed_work(system_highpri_wq, &chip->batt_bal_sm_work, 0);
 }
 
@@ -3149,7 +2876,7 @@ static void oplus_batt_bal_subscribe_sub_gauge_topic(struct oplus_mms *topic,
 
 	chip->sub_gauge_topic = topic;
 	chip->sub_gauge_subs =
-		oplus_mms_subscribe(chip->sub_gauge_topic, chip,
+		oplus_mms_subscribe(chip->gauge_topic, chip,
 				    oplus_batt_bal_sub_gauge_subs_callback, "batt_bal");
 	if (IS_ERR_OR_NULL(chip->sub_gauge_subs)) {
 		chg_err("subscribe gauge topic error, rc=%ld\n",
@@ -3159,7 +2886,7 @@ static void oplus_batt_bal_subscribe_sub_gauge_topic(struct oplus_mms *topic,
 
 	if (chip->b1_inr_strategy)
 		oplus_chg_strategy_init(chip->b1_inr_strategy);
-	vote(chip->run_interval_update_votable, DEF_VOTER, true, BATT_BAL_TIME_MS(10000), false);
+	vote(chip->run_interval_update_votable, DEF_VOTER, true, BATT_BAL_TIME_MS(5000), false);
 	mod_delayed_work(system_highpri_wq, &chip->batt_bal_sm_work, 0);
 }
 
@@ -3245,6 +2972,16 @@ static void oplus_batt_bal_wls_subs_callback(struct mms_subscribe *subs,
 			}
 			chg_info("charging_enable =%d\n", chip->wls_charging_enable);
 			break;
+		case WLS_ITEM_FASTCHG_STATUS:
+			oplus_mms_get_item_data(chip->wls_topic, id, &data, false);
+			if (chip->wls_fastchg_ing != data.intval) {
+				chip->wls_fastchg_ing = !!data.intval;
+				if (chip->wls_fastchg_ing)
+					queue_work(system_highpri_wq, &chip->batt_bal_disable_bal_work);
+				schedule_work(&chip->update_bal_state_work);
+			}
+			chg_info("wls_fastchg_ing =%d\n", chip->wls_fastchg_ing);
+			break;
 		default:
 			break;
 		}
@@ -3272,10 +3009,8 @@ static void oplus_batt_bal_subscribe_wls_topic(struct oplus_mms *topic,
 
 	oplus_mms_get_item_data(chip->wls_topic, WLS_ITEM_ONLINE, &data, true);
 	chip->wls_online = !!data.intval;
-	if (chip->wls_online) {
+	if (chip->wls_online)
 		oplus_batt_bal_set_pmos_enable(chip, false);
-		oplus_wired_set_supplementary_power_mos(chip->wired_topic, false);
-	}
 	chg_info("wls_online=%d\n", chip->wls_online);
 
 	oplus_mms_get_item_data(chip->wls_topic, WLS_ITEM_CHARGING_DISABLE, &data, true);
@@ -3346,41 +3081,6 @@ static void oplus_batt_bal_subscribe_pps_topic(struct oplus_mms *topic,
 	chg_info("pps_fastchg_ing=%d\n", chip->pps_fastchg_ing);
 }
 
-static void oplus_batt_bal_bal_subs_callback(struct mms_subscribe *subs,
-	enum mms_msg_type type, u32 id, bool sync)
-{
-	struct oplus_batt_bal_chip *chip = subs->priv_data;
-	union mms_msg_data data = { 0 };
-
-	switch (type) {
-	case MSG_TYPE_ITEM:
-		switch (id) {
-		case BATT_BAL_ITEM_LCF_ALARM:
-			oplus_mms_get_item_data(chip->batt_bal_topic, id, &data, false);
-			chip->alarm_curr_status = data.intval;
-			break;
-		default:
-			break;
-		}
-		break;
-	default:
-		break;
-	}
-}
-
-static void oplus_batt_bal_subscribe_bal_topic(struct oplus_batt_bal_chip *chip)
-{
-	chip->bal_subs =
-		oplus_mms_subscribe(chip->batt_bal_topic, chip,
-				    oplus_batt_bal_bal_subs_callback,
-				    "batt_bal");
-	if (IS_ERR_OR_NULL(chip->bal_subs)) {
-		chg_err("subscribe bal topic error, rc=%ld\n",
-			PTR_ERR(chip->bal_subs));
-		return;
-	}
-}
-
 static int oplus_chg_batt_bal_topic_init(struct oplus_batt_bal_chip *chip)
 {
 	struct oplus_mms_config mms_cfg = {};
@@ -3395,11 +3095,13 @@ static int oplus_chg_batt_bal_topic_init(struct oplus_batt_bal_chip *chip)
 		rc = PTR_ERR(chip->batt_bal_topic);
 		return rc;
 	}
-	oplus_batt_bal_subscribe_bal_topic(chip);
 
 	oplus_mms_wait_topic("common", oplus_batt_bal_subscribe_comm_topic, chip);
 	oplus_mms_wait_topic("wired", oplus_batt_bal_subscribe_wired_topic, chip);
 	oplus_mms_wait_topic("vooc", oplus_batt_bal_subscribe_vooc_topic, chip);
+	oplus_mms_wait_topic("gauge", oplus_batt_bal_subscribe_gauge_topic, chip);
+	oplus_mms_wait_topic("gauge:0", oplus_batt_bal_subscribe_main_gauge_topic, chip);
+	oplus_mms_wait_topic("gauge:1", oplus_batt_bal_subscribe_sub_gauge_topic, chip);
 	oplus_mms_wait_topic("ufcs", oplus_batt_bal_subscribe_ufcs_topic, chip);
 	oplus_mms_wait_topic("wireless", oplus_batt_bal_subscribe_wls_topic, chip);
 	oplus_mms_wait_topic("pps", oplus_batt_bal_subscribe_pps_topic, chip);
@@ -3473,12 +3175,13 @@ static void oplus_chg_batt_bal_init_work(struct work_struct *work)
 		goto init_error;
 	}
 	retry = 0;
-	chip->init_done = true;
+
 	oplus_batt_bal_cfg(chip, false, false, DEFAULT_DIR, 0, 0);
 	oplus_batt_bal_get_pmos_enable(chip);
 	oplus_batt_bal_reg_dump(chip);
 	oplus_batt_bal_virq_register(chip);
 	oplus_chg_batt_bal_topic_init(chip);
+	misc_register(&oplus_chg_device);
 
 	return;
 
@@ -3528,7 +3231,7 @@ static int oplus_batt_bal_strategy_init(struct oplus_batt_bal_chip *chip)
 
 
 #if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
-#include "config/dynamic_cfg/oplus_batt_bal_cfg.h"
+#include "config/dynamic_cfg/oplus_batt_bal_cfg.c"
 #endif
 
 #if defined(CONFIG_THERMAL) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
@@ -3574,20 +3277,6 @@ static int register_tz_thermal(struct oplus_batt_bal_chip *chip)
 }
 #endif
 
-static int oplus_bal_misc_dev_reg(struct oplus_batt_bal_chip *chip)
-{
-	int rc;
-
-	chip->misc_dev.minor = MISC_DYNAMIC_MINOR;
-	chip->misc_dev.name = "oplus_chg";
-	chip->misc_dev.fops = &oplus_chg_fops;
-	rc = misc_register(&chip->misc_dev);
-	if (rc)
-		chg_err("misc_register failed, rc=%d\n", rc);
-
-	return rc;
-}
-
 static int oplus_chg_batt_bal_probe(struct platform_device *pdev)
 {
 	int rc;
@@ -3611,7 +3300,6 @@ static int oplus_chg_batt_bal_probe(struct platform_device *pdev)
 	if (rc < 0)
 		goto strategy_init_err;
 
-	chip->init_done = false;
 	INIT_DELAYED_WORK(&chip->batt_bal_init_work, oplus_chg_batt_bal_init_work);
 	INIT_DELAYED_WORK(&chip->batt_bal_sm_work, oplus_batt_bal_sm_work);
 	INIT_DELAYED_WORK(&chip->ic_trig_abnormal_clear_work, oplus_batt_bal_ic_trig_abnormal_clear_work);
@@ -3621,12 +3309,6 @@ static int oplus_chg_batt_bal_probe(struct platform_device *pdev)
 	INIT_WORK(&chip->err_handler_work, oplus_batt_bal_err_handler_work);
 	INIT_WORK(&chip->update_run_interval_work, oplus_batt_bal_update_run_interval_work);
 	INIT_WORK(&chip->update_bal_state_work, oplus_batt_bal_update_bal_state_work);
-	INIT_WORK(&chip->bal_track_work, oplus_batt_bal_track_work);
-
-	oplus_mms_wait_topic("gauge", oplus_batt_bal_subscribe_gauge_topic, chip);
-	oplus_mms_wait_topic("gauge:0", oplus_batt_bal_subscribe_main_gauge_topic, chip);
-	oplus_mms_wait_topic("gauge:1", oplus_batt_bal_subscribe_sub_gauge_topic, chip);
-	oplus_bal_misc_dev_reg(chip);
 	schedule_delayed_work(&chip->batt_bal_init_work, 0);
 
 #if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
@@ -3644,44 +3326,12 @@ static int oplus_chg_batt_bal_probe(struct platform_device *pdev)
 
 strategy_init_err:
 bal_init_err:
-	chg_err("probe fail, rc=%d", rc);
 	devm_kfree(&pdev->dev, chip);
 	platform_set_drvdata(pdev, NULL);
 	return rc;
 }
 
-static int oplus_chg_batt_bal_pm_resume(struct device *dev)
-{
-	return 0;
-}
-
-static int oplus_chg_batt_bal_pm_suspend(struct device *dev)
-{
-	struct oplus_batt_bal_chip *chip = dev_get_drvdata(dev);
-	bool status = false;
-
-	if(chip == NULL)
-		return 0;
-
-	status = oplus_batt_bal_get_pmos_enable(chip);
-	if (!status && chip->abnormal_state == BATT_BAL_NO_ABNORMAL)
-		oplus_batt_bal_set_pmos_enable(chip, true);
-
-	oplus_wired_set_supplementary_power_mos(chip->wired_topic, true);
-
-	return 0;
-}
-
-static const struct dev_pm_ops bal_pm_ops = {
-	.resume = oplus_chg_batt_bal_pm_resume,
-	.suspend = oplus_chg_batt_bal_pm_suspend,
-};
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-static void oplus_chg_batt_bal_remove(struct platform_device *pdev)
-#else
 static int oplus_chg_batt_bal_remove(struct platform_device *pdev)
-#endif
 {
 	struct oplus_batt_bal_chip *chip = platform_get_drvdata(pdev);
 
@@ -3708,9 +3358,7 @@ static int oplus_chg_batt_bal_remove(struct platform_device *pdev)
 	devm_kfree(&pdev->dev, chip);
 	platform_set_drvdata(pdev, NULL);
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	return 0;
-#endif
 }
 
 static const struct of_device_id oplus_chg_batt_bal_match[] = {
@@ -3723,7 +3371,6 @@ static struct platform_driver oplus_chg_batt_bal_driver = {
 		.name = "oplus-batt_bal",
 		.owner	= THIS_MODULE,
 		.of_match_table = of_match_ptr(oplus_chg_batt_bal_match),
-		.pm = &bal_pm_ops,
 	},
 	.probe		= oplus_chg_batt_bal_probe,
 	.remove		= oplus_chg_batt_bal_remove,

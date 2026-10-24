@@ -108,7 +108,6 @@ static const char *const pd_ext_msg_name[] = {
 	"pps_status",
 	"ci",
 	"cc",
-	"snk_cap_ext",
 };
 
 static inline void print_ext_msg_event(struct tcpc_device *tcpc, uint8_t msg)
@@ -426,13 +425,7 @@ out:
 
 bool pd_process_tx_failed(struct pd_port *pd_port)
 {
-	uint32_t chip_pid;
-	int rc;
 	struct tcpc_device __maybe_unused *tcpc = pd_port->tcpc;
-
-	if (tcpc == NULL) {
-		return false;
-	}
 
 	if (pd_check_pe_state_ready(pd_port) ||
 		pd_check_pe_during_hard_reset(pd_port)) {
@@ -440,9 +433,6 @@ bool pd_process_tx_failed(struct pd_port *pd_port)
 		return false;
 	}
 
-	rc = tcpci_get_chip_pid(tcpc, &chip_pid);
-	if (!rc && chip_pid == HUSB311C_PID)
-		pd_set_rx_enable(pd_port, PD_RX_CAP_PE_READY_DFP);
 	pe_transit_soft_reset_state(pd_port);
 	return true;
 }
@@ -553,7 +543,7 @@ static inline bool pe_is_valid_pd_msg_id(struct pd_port *pd_port,
 	uint8_t sop_type = pd_msg->frame_type;
 	uint8_t msg_id = pd_get_msg_hdr_id(pd_port);
 	struct tcpc_device __maybe_unused *tcpc = pd_port->tcpc;
-	uint32_t chip_id, chip_pid;
+	uint32_t chip_id;
 	bool is_sc2150a = false;
 	int rc;
 
@@ -593,8 +583,7 @@ static inline bool pe_is_valid_pd_msg_id(struct pd_port *pd_port,
 	}
 
 	rc = tcpci_get_chip_id(tcpc, &chip_id);
-	rc = tcpci_get_chip_pid(tcpc, &chip_pid);
-	if (!rc && chip_id == SC2150A_DID && chip_pid == SC2150A_PID)
+	if (!rc && chip_id == SC2150A_DID)
 		is_sc2150a = true;
 
 	if (is_sc2150a && ((pd_port->pe_data.msg_id_rx[sop_type] + 2) %

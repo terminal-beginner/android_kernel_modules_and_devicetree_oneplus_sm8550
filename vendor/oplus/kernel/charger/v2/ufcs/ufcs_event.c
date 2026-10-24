@@ -10,7 +10,6 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/errno.h>
-#include <linux/spinlock.h>
 
 #include "ufcs_core.h"
 #include "ufcs_event.h"
@@ -557,26 +556,6 @@ static bool ufcs_check_handshake(struct ufcs_class *class)
 	return true;
 }
 
-static void ufcs_check_exit_ufcs_ack(struct ufcs_class *class, unsigned int dev_err_flag)
-{
-	struct ufcs_msg_sender *sender;
-
-	sender = &class->sender;
-
-	if (sender->status == MSG_WAIT_ACK &&
-	    sender->msg &&
-	    sender->msg->head.type == UFCS_CTRL_MSG &&
-	    sender->msg->ctrl_msg.command == CTRL_MSG_EXIT_UFCS_MODE &&
-	    ((dev_err_flag & (BIT(UFCS_RECV_ERR_SENT_CMP) |
-			      BIT(UFCS_COMM_ERR_BUS_CONFLICT) |
-			      BIT(UFCS_RECV_ERR_TRANS_FAIL) |
-			      BIT(UFCS_RECV_ERR_ACK_TIMEOUT))) ==
-	     BIT(UFCS_RECV_ERR_SENT_CMP))) {
-		ufcs_info("flag=0x%x exit ufcs ack received\n", dev_err_flag);
-		class->exit_ufcs_ack_received = true;
-	}
-}
-
 static int ufcs_check_error_info(struct ufcs_class *class, unsigned int dev_err_flag)
 {
 	struct ufcs_msg_sender *sender;
@@ -588,9 +567,7 @@ static int ufcs_check_error_info(struct ufcs_class *class, unsigned int dev_err_
 		goto err;
 	}
 
-	ufcs_check_exit_ufcs_ack(class, dev_err_flag);
-
-	if ((dev_err_flag & BIT(UFCS_HW_ERR_HARD_RESET)) && !class->exit_ufcs_ack_received) {
+	if (dev_err_flag & BIT(UFCS_HW_ERR_HARD_RESET)) {
 		if (class->start_cable_detect) {
 			ufcs_send_state(UFCS_NOTIFY_CABLE_HW_RESET, NULL);
 			ufcs_err("cable hard reset\n");
@@ -674,23 +651,21 @@ recv:
 	}
 
 	if (ufcs_check_handshake(class))
-		goto done;
+		return;
 	ufcs_send_state(UFCS_NOTIFY_ERR_FLAG, &dev_err_flag);
 	rc = ufcs_check_error_info(class, dev_err_flag);
 	if (rc != 0)
-		goto done;
+		return;
 
 	rc = ufcs->ops->read_msg(ufcs, buf, sizeof(buf));
 	if (rc < 0) {
 		ufcs_err("read ufcs msg error, rc=%d\n", rc);
-		goto done;
+		return;
 	}
 	if (rc == 0) {
 		ufcs_err("msg buf size is 0\n");
-		goto done;
+		return;
 	}
-	if (ufcs->ops->retrieve_flags)
-		ufcs->ops->retrieve_flags(ufcs);
 
 	if (ufcs_log_level >= LOG_LEVEL_DEBUG)
 		print_hex_dump(KERN_INFO, "UFCS[RECV BUF]: ", DUMP_PREFIX_OFFSET, 32, 1, buf, rc, false);
@@ -698,7 +673,7 @@ recv:
 	msg = ufcs_unpack_msg(class, buf, rc);
 	if (msg == NULL) {
 		ufcs_err("ufcs_unpack_msg error\n");
-		goto done;
+		return;
 	}
 	ufcs_dump_msg_info(msg, "recv");
 
@@ -710,7 +685,7 @@ recv:
 		 */
 		if (ufcs_recv_ack_nck_msg(class, &msg->ctrl_msg)) {
 			devm_kfree(&ufcs->dev, msg);
-			goto done;
+			return;
 		}
 	} else if (!class->config.reply_ack) {
 		/*
@@ -737,11 +712,9 @@ recv:
 	class->recv_msg = msg;
 	kthread_queue_work(class->worker, &class->event_work);
 
-done:
 	spin_lock(&class->err_flag_lock);
 	if (!kfifo_is_empty(&ufcs->err_flag_fifo)) {
 		spin_unlock(&class->err_flag_lock);
-		ufcs_info("err_flag_fifo not empty\n");
 		goto recv;
 	}
 	spin_unlock(&class->err_flag_lock);
@@ -879,7 +852,6 @@ static int ufcs_process_vendor_msg_event(struct ufcs_class *class, struct ufcs_e
 int ufcs_push_event(struct ufcs_class *class, struct ufcs_event *event)
 {
 	bool event_pending = false;
-	unsigned long flags;
 
 	if (class == NULL) {
 		ufcs_err("class is NULL\n");
@@ -891,11 +863,11 @@ int ufcs_push_event(struct ufcs_class *class, struct ufcs_event *event)
 	}
 
 	ufcs_debug("push %s event\n", ufcs_get_event_name(event));
-	spin_lock_irqsave(&class->event.event_list_lock, flags);
+	spin_lock(&class->event.event_list_lock);
 	if (!list_empty(&class->event.event_list))
 		event_pending = true;
 	list_add_tail(&event->list, &class->event.event_list);
-	spin_unlock_irqrestore(&class->event.event_list_lock, flags);
+	spin_unlock(&class->event.event_list_lock);
 	if (event_pending)
 		ufcs_err("event pending\n");
 	complete(&class->event.ack);

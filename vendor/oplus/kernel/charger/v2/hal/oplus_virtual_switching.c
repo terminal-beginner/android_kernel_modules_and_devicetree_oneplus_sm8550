@@ -340,21 +340,12 @@ child_init_err:
 	return rc;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-static void oplus_virtual_switching_remove(struct platform_device *pdev)
-#else
 static int oplus_virtual_switching_remove(struct platform_device *pdev)
-#endif
 {
 	struct oplus_virtual_switching_ic *chip = platform_get_drvdata(pdev);
 
-if (chip == NULL) {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
+	if (chip == NULL)
 		return -ENODEV;
-#else
-		return;
-#endif
-	}
 
 	if (chip->ic_dev->online)
 		oplus_chg_switching_exit(chip->ic_dev);
@@ -363,9 +354,7 @@ if (chip == NULL) {
 	devm_kfree(&pdev->dev, chip);
 	platform_set_drvdata(pdev, NULL);
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
 	return 0;
-#endif
 }
 
 static void oplus_virtual_switching_shutdown(struct platform_device *pdev)

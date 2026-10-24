@@ -16,9 +16,6 @@
 #include "oplus_chg_symbol.h"
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-extern struct oplus_gauge_chip* oplus_mtk_gauge_init(void);
-#endif
 static struct oplus_gauge_chip *g_gauge_chip = NULL;
 static struct oplus_gauge_chip *g_sub_gauge_chip = NULL;
 static struct oplus_plat_gauge_operations *g_plat_gauge_ops = NULL;
@@ -274,37 +271,6 @@ int oplus_gauge_get_batt_temperature(void)
 		}
 #endif
 		return batt_temp;
-	}
-}
-
-int oplus_gauge_get_dec_fg_type(void)
-{
-	int type = 0;
-	if (!g_gauge_chip || !g_gauge_chip->gauge_ops || !g_gauge_chip->gauge_ops->get_dec_fg_type) {
-		return DEC_CV_FG_UNKNOWN;
-	} else {
-		type = g_gauge_chip->gauge_ops->get_dec_fg_type();
-		return type;
-	}
-}
-
-int oplus_gauge_get_vct(void)
-{
-	int vct = 0;
-	if (!g_gauge_chip || !g_gauge_chip->gauge_ops || !g_gauge_chip->gauge_ops->get_fg_vct) {
-		return 0;
-	} else {
-		vct = g_gauge_chip->gauge_ops->get_fg_vct();
-		return vct;
-	}
-}
-
-bool oplus_gauge_set_vct(int vct)
-{
-	if (!g_gauge_chip || !g_gauge_chip->gauge_ops || !g_gauge_chip->gauge_ops->set_fg_vct) {
-		return true;
-	} else {
-		return g_gauge_chip->gauge_ops->set_fg_vct(vct);
 	}
 }
 
@@ -590,13 +556,6 @@ void oplus_gauge_init(struct oplus_gauge_chip *chip)
 	g_gauge_chip = chip;
 }
 EXPORT_SYMBOL(oplus_gauge_init);
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-void oplus_mtk_plat_gauge_init(void)
-{
-	g_gauge_chip = oplus_mtk_gauge_init();
-}
-#endif
 
 void oplus_plat_gauge_init(struct oplus_plat_gauge_operations *ops)
 {
@@ -1067,20 +1026,7 @@ int oplus_gauge_bqfs_data_check(void)
 
 void oplus_gauge_get_device_name(u8 *name, int len)
 {
-	if (!g_gauge_chip || !name)
-		return;
-	else if (!g_gauge_chip->device_name) {
-		if (!g_gauge_chip->gauge_ops || !g_gauge_chip->gauge_ops->get_device_name)
-			return;
-		g_gauge_chip->device_name = kmalloc(len, GFP_KERNEL);
-		if (!g_gauge_chip->device_name)
-			return;
-		else
-			memset(g_gauge_chip->device_name, 0, len);
-
-		g_gauge_chip->gauge_ops->get_device_name(g_gauge_chip->device_name, len);
-		strncpy(name, g_gauge_chip->device_name, len);
-	} else
+	if (g_gauge_chip && g_gauge_chip->device_name && name)
 		strncpy(name, g_gauge_chip->device_name, len);
 }
 

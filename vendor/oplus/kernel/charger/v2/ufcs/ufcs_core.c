@@ -317,7 +317,6 @@ static void ufcs_release(struct device *dev)
 	struct ufcs_dev *ufcs = container_of(dev, struct ufcs_dev, dev);
 	struct ufcs_class *class = ufcs->class;
 
-	kfifo_free(&ufcs->err_flag_fifo);
 	kfree(ufcs);
 	kfree(class);
 }
@@ -402,7 +401,7 @@ ufcs_device_register(struct device *parent, struct ufcs_dev_ops *ops,
 	rc = kfifo_alloc(&ufcs->err_flag_fifo, UFCS_ERR_FLAG_BUF_SIZE, GFP_KERNEL);
 	if (rc < 0) {
 		ufcs_err("alloc err_flag_fifo error\n");
-		goto free_ufcs;
+		goto free_ufcs_mem;
 	}
 
 	rc = dev_set_name(&ufcs->dev, "ufcs");
@@ -428,7 +427,7 @@ ufcs_device_register(struct device *parent, struct ufcs_dev_ops *ops,
 
 	class->worker = kthread_create_worker(0, "ufcs");
 	if (IS_ERR(class->worker)) {
-		rc = PTR_ERR(class->worker);
+		rc = -ENOMEM;
 		goto del_device;
 	}
 
@@ -474,6 +473,10 @@ device_create_file_err:
 	device_del(&ufcs->dev);
 free_ufcs:
 	put_device(&ufcs->dev);
+free_ufcs_mem:
+	kfifo_free(&ufcs->err_flag_fifo);
+	kfree(ufcs);
+	kfree(class);
 	return ERR_PTR(rc);
 }
 EXPORT_SYMBOL(ufcs_device_register);
@@ -492,6 +495,9 @@ void ufcs_device_unregister(struct ufcs_dev *ufcs)
 	kthread_destroy_worker(class->worker);
 	device_del(&ufcs->dev);
 	put_device(&ufcs->dev);
+	kfifo_free(&ufcs->err_flag_fifo);
+	kfree(ufcs);
+	kfree(class);
 }
 EXPORT_SYMBOL(ufcs_device_unregister);
 
