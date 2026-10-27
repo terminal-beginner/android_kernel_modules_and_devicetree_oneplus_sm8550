@@ -845,6 +845,7 @@ struct oplus_voocphy_manager {
 	unsigned int vooc_ntime_full_voltage;
 	int ovp_reg;
 	int ocp_reg;
+	u8 svooc_vbus_ovp_reg;
 	int reg_ctrl_1;
 	int adapter_check_vooc_head_count;
 	int adapter_check_cmd_data_count;
@@ -916,6 +917,8 @@ struct oplus_voocphy_manager {
 
 	bool cancel_primary_switch; /* cancel usb primary switch */
 	bool vooc_direct_charge; /* inform tcpc to ignore pd vbus irq */
+	bool twice_request_current_enable;
+	bool vbus_adjust_new_method;
 };
 
 struct oplus_voocphy_operations {
