@@ -13,19 +13,19 @@ ifeq ($(KERNEL_BUILD), y)
 	WLAN_ROOT := drivers/staging/qcacld-3.0
 	WLAN_COMMON_ROOT := cmn
 	WLAN_COMMON_INC := $(WLAN_ROOT)/$(WLAN_COMMON_ROOT)
-	WLAN_FW_API := $(WLAN_ROOT)/../fw-api/
+	WLAN_FW_API := $(WLAN_ROOT)/../fw-api
 	WLAN_PROFILE := default
 endif
 
 WLAN_COMMON_ROOT ?= cmn
 WLAN_COMMON_INC ?= $(WLAN_ROOT)/$(WLAN_COMMON_ROOT)
-WLAN_FW_API ?= $(WLAN_ROOT)/../fw-api/
+WLAN_FW_API ?= $(WLAN_ROOT)/../../fw-api
 WLAN_PROFILE ?= default
 CONFIG_QCA_CLD_WLAN_PROFILE ?= $(WLAN_PROFILE)
 DEVNAME ?= wlan
-WLAN_PLATFORM_INC ?= $(WLAN_ROOT)/../platform/inc
+WLAN_PLATFORM_INC ?= $(WLAN_ROOT)/../../platform/inc
 
-ifeq ($(KERNEL_BUILD), n)
+ifeq ($(KERNEL_BUILD), y)
 ifneq ($(ANDROID_BUILD_TOP),)
       ANDROID_BUILD_TOP_REL := $(shell python -c "import os.path; print(os.path.relpath('$(ANDROID_BUILD_TOP)'))")
       override WLAN_ROOT := $(ANDROID_BUILD_TOP_REL)/$(WLAN_ROOT)
@@ -324,6 +324,10 @@ endif
 
 ifeq ($(CONFIG_WLAN_FEATURE_TWT), y)
 HDD_OBJS += $(HDD_SRC_DIR)/wlan_hdd_twt.o
+endif
+
+ifeq ($(CONFIG_FEATURE_FRAME_INJECTION_SUPPORT), y)
+CONFIG_FEATURE_MONITOR_MODE_SUPPORT := y
 endif
 
 ifeq ($(CONFIG_FEATURE_MONITOR_MODE_SUPPORT), y)
@@ -3301,6 +3305,7 @@ INCS +=		$(COAP_WMI_INC)
 ccflags-y += $(INCS)
 
 cppflags-y +=	-DANI_OS_TYPE_ANDROID=6 \
+		-D__ANDROID_COMMON_KERNEL__ \
 		-Wall\
 		-Werror\
 		-D__linux__
@@ -3449,6 +3454,11 @@ cppflags-$(CONFIG_FEATURE_WLAN_TIME_SYNC_FTM) += -DFEATURE_WLAN_TIME_SYNC_FTM
 cppflags-$(CONFIG_WLAN_FEATURE_LRO_CTX_IN_CB) += -DWLAN_FEATURE_LRO_CTX_IN_CB
 
 #For both legacy and lithium chip's monitor mode config
+ifeq ($(CONFIG_FEATURE_FRAME_INJECTION_SUPPORT), y)
+ccflags-y += -DFEATURE_FRAME_INJECTION_SUPPORT
+CONFIG_FEATURE_MONITOR_MODE_SUPPORT := y
+endif
+
 ifeq ($(CONFIG_FEATURE_MONITOR_MODE_SUPPORT), y)
 cppflags-y += -DFEATURE_MONITOR_MODE_SUPPORT
 cppflags-$(CONFIG_DP_CON_MON_MSI_ENABLED) += -DDP_CON_MON_MSI_ENABLED
