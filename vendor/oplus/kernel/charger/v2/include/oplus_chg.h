@@ -172,6 +172,8 @@ static inline struct timespec current_kernel_time(void)
 #define PD_APDO_MIN_VOLT(pdo)			(((pdo) >> 8) & 0xFF)
 #define PD_APDO_MAX_CURR(pdo)			((pdo) & 0x7F)
 
+#define OPLUS_BATTERY_TYPE_LEN 16
+
 int oplus_is_rf_ftm_mode(void);
 
 typedef enum {
@@ -307,6 +309,14 @@ enum oplus_chg_wls_event_code {
 	WLS_EVENT_RXAC_DETACH,
 	WLS_EVENT_EPP_NEGO_FAIL,
 	WLS_EVENT_EPP_TX_MANU_ID,
+	WLS_EVENT_BLE_MAC_ADDR,
+	WLS_EVENT_WLSPEN_CHG_STATUS,
+};
+
+enum oplus_chg_wls_tx_start_type {
+	OPLUS_CHG_WLS_TX_STOP,
+	OPLUS_CHG_WLS_TX_START_NORMAL,
+	OPLUS_CHG_WLS_TX_START_WLSPEN,
 };
 
 enum fastchg_protocol_type {
@@ -371,7 +381,11 @@ uint8_t oplus_chg_get_region_id(void);
 unsigned int oplus_chg_get_nvid_support_flags(void);
 bool oplus_chg_get_common_charge_icl_support_flags(void);
 bool oplus_chg_get_boot_reset_adapter_support_flags(void);
+bool oplus_chg_get_fcs_support_flags(void);
 bool battery_sn_match(struct device_node *node, const char *actual_sn);
+struct device_node *oplus_get_node_by_type(struct device_node *father_node);
+struct device_node *oplus_get_node_by_child_gauge(struct device_node *father_node);
+int oplus_gauge_get_battery_type_str(char *type);
 
 void oplus_power_supply_changed_gp(struct power_supply *psy, unsigned int grace_period_ms);
 void oplus_power_supply_changed(struct power_supply *psy);

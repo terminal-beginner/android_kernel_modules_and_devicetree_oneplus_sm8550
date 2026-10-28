@@ -118,6 +118,7 @@ enum comm_topic_item {
 	COMM_ITEM_BOOT_COMPLETED,
 	COMM_ITEM_EIS_STATUS,
 	COMM_ITEM_FLASH_MODE,
+	COMM_ITEM_BATT_CV_FULL,
 };
 
 /*
@@ -200,5 +201,8 @@ int oplus_comm_get_removed_bat_decidegc(struct oplus_mms *topic);
 void oplus_comm_set_dec_delta(struct oplus_mms *topic, int val);
 void oplus_comm_get_dec_delta(struct oplus_mms *topic, int *val);
 bool oplus_comm_get_hmac_not_pop_up(struct oplus_mms *topic);
+bool oplus_comm_get_hmac_limit_enable(struct oplus_mms *topic);
+bool oplus_comm_is_non_standard_hmac_status(struct oplus_mms *topic,
+					    bool authenticate, bool hmac);
 int oplus_comm_get_bdd_voltdiff_trend(struct oplus_mms *topic);
 #endif /* __OPLUS_CHG_COMM_H__ */

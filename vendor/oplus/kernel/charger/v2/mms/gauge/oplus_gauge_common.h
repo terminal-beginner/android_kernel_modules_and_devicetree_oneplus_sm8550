@@ -5,6 +5,8 @@
 #include "oplus_sili.h"
 #include <oplus_sec.h>
 
+#define WORKAROUND_MASK_VTERM_INVALID_USE_MAX	(1U << 0)
+
 #define GAUGE_IC_NUM_MAX 2
 #define CALIB_TIME_STR_LEN 32
 
@@ -78,6 +80,8 @@ struct oplus_mms_gauge {
 	struct oplus_mms *batt_bal_topic;
 	struct oplus_mms *wls_topic;
 	struct oplus_mms *cpa_topic;
+	struct oplus_mms *ufcs_topic;
+	struct oplus_mms *pps_topic;
 	struct mms_subscribe *comm_subs;
 	struct mms_subscribe *wired_subs;
 	struct mms_subscribe *gauge_subs;
@@ -86,6 +90,8 @@ struct oplus_mms_gauge {
 	struct mms_subscribe *wls_subs;
 	struct mms_subscribe *batt_bal_subs;
 	struct mms_subscribe *cpa_subs;
+	struct mms_subscribe *ufcs_subs;
+	struct mms_subscribe *pps_subs;
 
 	struct delayed_work hal_gauge_init_work;
 	struct delayed_work get_reserve_calib_info_work;
@@ -97,6 +103,7 @@ struct oplus_mms_gauge {
 	struct work_struct offline_handler_work;
 	struct work_struct resume_handler_work;
 	struct work_struct update_change_work;
+	struct work_struct set_fast_sampling_work;
 	struct work_struct gauge_update_work;
 	struct work_struct gauge_set_curve_work;
 	struct work_struct set_gauge_batt_full_work;
@@ -122,12 +129,17 @@ struct oplus_mms_gauge {
 	struct delayed_work gauge_nvram_stress_test_work;
 	struct delayed_work gauge_stress_read_test_work;
 	struct delayed_work gauge_term_volt_stress_test_work;
+	struct delayed_work check_imp_model_work;
+	struct delayed_work gauge_fcc_vdelta_work;
+	struct delayed_work gauge_fcc_ra0_work;
+	struct delayed_work gauge_fcc_t_ra_work;
 
 	struct votable *gauge_update_votable;
 	struct deep_dischg_spec deep_spec;
 	struct oplus_chg_strategy **ddrc_strategy;
 	struct ddrc_temp_curves ddrc_curve;
 	struct ddrc_temp_curves ddrc_curve_sub;
+	u32 workaround_mask;
 	int ddrc_num;
 
 	struct oplus_sec *sec_chip;
@@ -139,6 +151,9 @@ struct oplus_mms_gauge {
 	int check_batt_vol_count;
 	bool pd_svooc;
 	bool bat_volt_different;
+
+	bool check_imp_model_done;
+	struct votable *wired_charging_disable_votable;
 
 	bool factory_test_mode;
 	bool wired_online;
@@ -177,6 +192,7 @@ struct oplus_mms_gauge {
 	int sub_btb_curr_limit;
 	struct fcl_curves fcl;
 	int fcl_offset;
+	bool fcc_ra_cv;
 	struct oplus_gauge_nvram_stress_test nvram_test;
 	int oplus_mainbat_compensate_num;
 	int32_t oplus_mainbat_cur_thr[CURR_TEMP_REGION_MAX];
