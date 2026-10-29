@@ -600,6 +600,7 @@ struct syna_tcm_hcd {
 	bool health_monitor_support;
 	bool health_monitor_v2_support;
 	bool pt17_pt18_test_support;
+	bool waterproof_negative_valid_support;
 };
 
 struct device_hcd {
